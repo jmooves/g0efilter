@@ -20,9 +20,9 @@ g0efilter is a lightweight container designed to filter outbound (egress) traffi
 * The optional g0efilter-dashboard displays real-time traffic and enforcement actions.
 
 > [!NOTE]
-> Attached containers share g0efilter’s network namespace.  
-> g0efilter listens on `HTTP_PORT` (default `8080`) and `HTTPS_PORT` (default `8443`) for inspection.  
-> Avoid binding these ports in attached containers or change them via environment variables.
+> Attached containers share g0efilter's network namespace and must not bind to ports used by g0efilter.  
+> By default, g0efilter uses `HTTP_PORT` (8080), `HTTPS_PORT` (8443), and optionally `DNS_PORT` (53).  
+> Either avoid these ports in attached containers or change them via environment variables.
 
 ### HTTPS/Host Header filtering behaviour (default)
 
@@ -32,7 +32,9 @@ g0efilter is a lightweight container designed to filter outbound (egress) traffi
 ### DNS filtering behaviour
 
 * All IPs listed in the policy file bypass any redirection.
-* In DNS mode, traffic to port 53 is redirected to an internal DNS server that only resolves domains that match the policy. Non-policy domains simply fail to resolve, but direct IP connections are allowed (no default deny), so this mode can potentially be bypassed.
+* In DNS mode, traffic to port 53 is redirected to an internal DNS server that only resolves allowlisted domains.
+* Non-allowlisted domains receive NXDOMAIN responses (fail to resolve).
+* Direct IP connections bypass DNS filtering, so this mode offers less comprehensive protection than HTTPS mode.
 
 ### Dashboard container
 
@@ -66,40 +68,42 @@ allowlist:
 
 | Variable            | Description                                        | Default             |
 | ------------------- | -------------------------------------------------- | ------------------- |
-| `LOG_LEVEL`         | Log level (INFO, DEBUG, etc.)                      | `INFO`              |
+| `LOG_LEVEL`         | Log level (TRACE, DEBUG, INFO, WARN, ERROR)        | `INFO`              |
 | `HOSTNAME`          | To identify which endpoint is sending the logs     | unset               |
 | `HTTP_PORT`         | Local HTTP port                                    | `8080`              |
 | `HTTPS_PORT`        | Local HTTPS port                                   | `8443`              |
 | `POLICY_PATH`       | Path to policy file inside container               | `/app/policy.yaml`  |
 | `FILTER_MODE`       | `https` (TLS SNI/HTTP Host) or `dns` (DNS name filtering)      | `https`             |
 | `DNS_PORT`          | DNS listen port                                    | `53`                |
-| `DNS_UPSTREAMS`     | Upstream DNS servers (comma-separated)             | `127.0.0.11:53`     |
+| `DNS_UPSTREAMS`     | Upstream DNS servers (comma-separated). Uses Docker's default DNS if not specified | `127.0.0.11:53`     |
 | `DASHBOARD_HOST`    | Dashboard URL for log shipping                     | unset               |
 | `DASHBOARD_API_KEY` | API key for dashboard authentication               | unset               |
 | `DASHBOARD_QUEUE_SIZE` | Queue size for buffering logs before sending to dashboard. Logs are dropped if queue is full | `1024` |
+| `DASHBOARD_START_DELAY` | Delay before starting dashboard log shipping (supports duration formats like `5s`, `1m`) | `5s` |
 | `LOG_FILE`          | Optional path for persistent log file              | unset               |
 | `NFLOG_BUFSIZE`     | Netfilter log buffer size                          | `96`                |
 | `NFLOG_QTHRESH`     | Netfilter log queue threshold                      | `50`                |
 | `NOTIFICATION_HOST`            | Gotify server URL for security alert notifications | unset               |
 | `NOTIFICATION_KEY`             | Gotify application key for authentication          | unset               |
-| `NOTIFICATION_BACKOFF_SECONDS` | Rate limit backoff period for duplicate alerts    | `60`                |
+| `NOTIFICATION_BACKOFF_SECONDS` | Rate limit backoff period for duplicate alerts (in seconds) | `60`                |
 
 ### g0efilter-dashboard
 
-| Variable       | Description                                                                                                       | Default |
-| -------------- | ----------------------------------------------------------------------------------------------------------------- | ------- |
-| `PORT`         | Address/port the dashboard listens on (HTTP UI + API). Can be just a port (`8081`) or address+port (`:8081`)     | `:8081` |
-| `API_KEY`      | API key used to authenticate incoming log data from the `g0efilter` container. Must match `DASHBOARD_API_KEY`    | unset   |
-| `LOG_LEVEL`    | Log level (`INFO`, `DEBUG`, etc.)                                                                                 | `INFO`  |
-| `BUFFER_SIZE`  | In-memory buffer size for events. Controls how many events can be queued before dropping                          | `5000`  |
-| `READ_LIMIT`   | Maximum number of events returned per read/API request                                                            | `500`   |
-| `SSE_RETRY_MS` | Server-Sent Events (SSE) client retry interval in milliseconds                                                    | `2000`  |
-| `RATE_RPS`     | Maximum average requests per second (rate-limit)                                                                  | `50`    |
-| `RATE_BURST`   | Maximum burst size for rate-limiting (in requests)                                                                | `100`   |
+| Variable        | Description                                                                                                       | Default |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- | ------- |
+| `PORT`          | Address/port the dashboard listens on (HTTP UI + API). Can be just a port (`8081`) or address+port (`:8081`)     | `:8081` |
+| `API_KEY`       | API key used to authenticate incoming log data from the `g0efilter` container. Must match `DASHBOARD_API_KEY`    | unset   |
+| `LOG_LEVEL`     | Log level (TRACE, DEBUG, INFO, WARN, ERROR)                                                                       | `INFO`  |
+| `BUFFER_SIZE`   | In-memory buffer size for events. Controls how many events can be queued before dropping                          | `5000`  |
+| `READ_LIMIT`    | Maximum number of events returned per read/API request                                                            | `500`   |
+| `SSE_RETRY_MS`  | Server-Sent Events (SSE) client retry interval in milliseconds                                                    | `2000`  |
+| `WRITE_TIMEOUT` | HTTP write timeout in seconds (0 = no timeout, recommended for SSE)                                               | `0`     |
+| `RATE_RPS`      | Maximum average requests per second (rate-limit)                                                                  | `50`    |
+| `RATE_BURST`    | Maximum burst size for rate-limiting (in requests)                                                                | `100`   |
 
 ## Dashboard Reverse Proxy Suggestion
 
-I would recommended to place the **g0efilter-dashboard** behind a reverse proxy such as Traefik with the following controls:
+I would recommend to place the **g0efilter-dashboard** behind a reverse proxy such as Traefik with the following controls:
 
 **Public Endpoints (no authentication required):**
 - `GET /health` - Health check endpoint for monitoring/load balancers
@@ -107,23 +111,22 @@ I would recommended to place the **g0efilter-dashboard** behind a reverse proxy 
 **API Key Protected Endpoints:**
 - `POST /api/v1/logs` - Log ingestion from g0efilter containers (protected by `API_KEY` environment variable)
 
-**SSO/Authentication Protected Endpoints:**
+**Endpoints to Protect with Middleware Auth:**
 - `GET /` - Dashboard web UI
 - `GET /api/v1/logs` - Read logs
 - `GET /api/v1/events` - Server-Sent Events stream
 - `DELETE /api/v1/logs` - Clear logs
-- All other dashboard routes
 
 **Example Configuration Pattern:**
 
 Configure your reverse proxy to:
 1. Allow `/health` publicly for health checks
-2. Bypass SSO/OIDC middleware for `POST /api/v1/logs` (allows g0efilter containers to authenticate with API key instead)
-3. Require SSO/OIDC middleware for all other routes (UI and read operations)
+2. Bypass auth middleware for `POST /api/v1/logs` (allows g0efilter containers to authenticate with API key instead)
+3. Require auth middleware for all other routes (UI and read operations)
 
 This ensures:
 - g0efilter containers can ship logs using the API key
-- Dashboard UI access is protected by some sort of auth middleware (eg PocketID, Authelia, Authentik etc).
+- Dashboard UI access is protected by auth middleware (e.g., Authelia, Authentik, PocketID)
 - Monitoring systems can check health without authentication
 - Unauthorized users cannot view sensitive traffic logs
 
