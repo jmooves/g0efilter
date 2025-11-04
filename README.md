@@ -10,6 +10,10 @@
 
 g0efilter is a lightweight container designed to filter outbound (egress) traffic from attached container workloads. Run g0efilter alongside your workloads and attach them to its network namespace to enforce a simple IP and domain allowlist policy.
 
+### Quick Start
+
+Refer to the [examples](https://github.com/g0lab/g0efilter/tree/main/examples).
+
 ### How it works
 
 * Attach containers to g0efilter using `network_mode: "service:g0efilter"` in Docker Compose.
@@ -43,11 +47,6 @@ The optional **g0efilter-dashboard** container runs a small web UI on **port 808
 Example Dashboard Screenshot:
 
 ![g0efilter-dashboard-example](https://raw.githubusercontent.com/g0lab/g0efilter/main/examples/images/g0efilter-dashboard-example.png)
-
-
-### Quick Start
-
-Refer to the [examples](https://github.com/g0lab/g0efilter/tree/main/examples).
 
 ### Example policy.yaml
 
