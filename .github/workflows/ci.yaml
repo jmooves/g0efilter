@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    tags-ignore:
+      - '**'
   pull_request:
   workflow_dispatch:
 
@@ -17,8 +19,8 @@ env:
   GOLANGCI_LINT_VERSION: latest
 
 jobs:
-  validate:
-    name: Validate
+  validate-test-lint:
+    name: Validate, Test & Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -37,21 +39,6 @@ jobs:
 
       - name: go vet
         run: go vet ./...
-
-  test-and-lint:
-    name: Test and Lint
-    runs-on: ubuntu-latest
-    needs: [validate]
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Go (from go.mod)
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          check-latest: true
-          cache: true
 
       - name: Install dependencies
         run: go mod download
@@ -73,8 +60,8 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.txt
 
-  # build-smoke:
-  #   needs: [test-and-lint]
+  # build-test:
+  #   needs: [validate-test-lint]
   #   runs-on: ubuntu-latest
   #   strategy:
   #     fail-fast: false
