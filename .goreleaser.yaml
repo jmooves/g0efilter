@@ -56,7 +56,7 @@ dockers_v2:
       org.opencontainers.image.created: "{{ .Date }}"
 
   - id: g0efilter-dashboard
-    dockerfile: ./Dockerfile-dashboard
+    dockerfile: ./Dockerfile.dashboard
     images:
       - docker.io/g0lab/g0efilter-dashboard
     tags:

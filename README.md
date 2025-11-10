@@ -31,7 +31,7 @@ Refer to the [examples](https://github.com/g0lab/g0efilter/tree/main/examples).
 ### HTTPS/Host Header filtering behaviour (default)
 
 * All IPs listed in the policy file bypass any redirection.
-* In HTTPS mode (default), traffic to ports 80 and 443 is redirected to local services that check the HTTP Host header or TLS SNI against the policy file, anything not matching is blocked by nftables.
+* In HTTPS mode (default), traffic to ports 80 and 443 is redirected to local services that check the HTTP Host header or TLS SNI against the policy file, anything not matching is blocked.
 
 ### DNS filtering behaviour
 
@@ -218,7 +218,6 @@ services:
       - .env.dashboard
     network_mode: "service:g0efilter"
     restart: always
-    depends_on: [g0efilter]
 
   example-container:
     image: alpine:latest
@@ -226,7 +225,6 @@ services:
     command: >
       sh -c "apk add --no-cache curl && tail -f /dev/null"
     network_mode: "service:g0efilter"
-    depends_on: [g0efilter]
 ```
 
 ## License

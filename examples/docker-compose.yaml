@@ -32,7 +32,6 @@ services:
       - .env.dashboard
     network_mode: "service:g0efilter"
     restart: always
-    depends_on: [g0efilter]
 
   example-container:
     image: alpine:latest
@@ -40,4 +39,3 @@ services:
     command: >
       sh -c "apk add --no-cache curl && tail -f /dev/null"
     network_mode: "service:g0efilter"
-    depends_on: [g0efilter]
