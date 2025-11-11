@@ -119,6 +119,9 @@ func (s *Server) ingestHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listLogsHandler(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 
+	// Sanitize search query to prevent injection
+	q = SanitizeSearchQuery(q)
+
 	var sinceID int64
 
 	v := strings.TrimSpace(r.URL.Query().Get("since_id"))
@@ -284,4 +287,51 @@ func (s *Server) clearLogsHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error("failed to encode clear response", "error", err)
 	}
+}
+
+// SanitizeSearchQuery validates and sanitizes the search query parameter.
+// Returns sanitized query or empty string if validation fails.
+func SanitizeSearchQuery(q string) string {
+	if q == "" {
+		return q
+	}
+
+	// Limit query length
+	const maxQueryLength = 200
+	if len(q) > maxQueryLength {
+		return ""
+	}
+
+	if !isValidSearchChars(q) {
+		return ""
+	}
+
+	if hasInjectionPatterns(q) {
+		return ""
+	}
+
+	return q
+}
+
+// isValidSearchChars checks if query contains only valid characters.
+func isValidSearchChars(q string) bool {
+	for _, r := range q {
+		// Reject control characters
+		if r < 32 || r == 127 {
+			return false
+		}
+		// Block CRLF injection
+		if r == '\n' || r == '\r' || r == '\x00' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// hasInjectionPatterns checks for common injection attack patterns.
+func hasInjectionPatterns(q string) bool {
+	return strings.Contains(q, "\r\n") ||
+		strings.Contains(q, "<script") ||
+		strings.Contains(q, "javascript:")
 }

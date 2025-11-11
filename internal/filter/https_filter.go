@@ -79,6 +79,22 @@ func extractSNIFromConnection(conn net.Conn, opts Options) (string, *bytes.Buffe
 
 	sni := strings.TrimSuffix(strings.ToLower(ch.ServerName), ".")
 
+	// Validate and sanitize SNI
+	sanitized, valid := sanitizeHostWithLogger(sni, opts.Logger, "https")
+	if valid {
+		sni = sanitized
+	} else if sni != "" {
+		// SNI was present but invalid - treat as blocked
+		if opts.Logger != nil {
+			opts.Logger.Debug("https.sni_invalid",
+				"raw_sni", sni,
+				"src", conn.RemoteAddr().String(),
+			)
+		}
+
+		sni = "" // Treat invalid SNI as empty
+	}
+
 	// Emit synthetic event early if we have a valid SNI
 	if opts.Logger != nil && sni != "" {
 		// Get original destination for synthetic event

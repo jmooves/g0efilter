@@ -1,0 +1,262 @@
+package filter
+
+import (
+	"log/slog"
+	"strings"
+)
+
+const (
+	maxHostLength      = 253 // RFC 1035
+	maxLabelLength     = 63  // RFC 1035
+	minValidHostLength = 1   // At least one character
+)
+
+// sanitizeHost validates and sanitizes a host/domain extracted from HTTP Host header or TLS SNI.
+// Returns the sanitized host and true if valid, or empty string and false if invalid.
+// This rejects anything suspicious rather than attempting repair.
+func sanitizeHost(host string) (string, bool) {
+	return sanitizeHostWithLogger(host, nil, "")
+}
+
+// sanitizeHostWithLogger validates and sanitizes a host/domain with trace logging support.
+// The source parameter helps identify where the validation is being called from (e.g., "http", "https").
+func sanitizeHostWithLogger(host string, logger *slog.Logger, source string) (string, bool) {
+	logDebug := makeLogFunc(logger, source)
+
+	logDebug(".validation_start", "host", host, "length", len(host))
+
+	if !hasValidLength(host) {
+		logDebug(".validation_failed",
+			"host", host,
+			"reason", "invalid_length",
+			"length", len(host),
+			"max", maxHostLength,
+		)
+
+		return "", false
+	}
+
+	if !hasValidCharacters(host) {
+		logDebug(".validation_failed",
+			"host", host,
+			"reason", "invalid_characters",
+		)
+
+		return "", false
+	}
+
+	if !hasValidStructure(host) {
+		reason := determineStructureFailureReason(host)
+		logDebug(".validation_failed",
+			"host", host,
+			"reason", "invalid_structure",
+			"detail", reason,
+		)
+
+		return "", false
+	}
+
+	if !hasValidLabels(host) {
+		reason := determineLabelFailureReason(host)
+		logDebug(".validation_failed",
+			"host", host,
+			"reason", "invalid_labels",
+			"detail", reason,
+		)
+
+		return "", false
+	}
+
+	logDebug(".validation_success", "host", host)
+
+	return host, true
+}
+
+// makeLogFunc creates a logging function that only logs when logger and source are valid.
+// Returns a no-op function if logger is nil or source is empty.
+func makeLogFunc(logger *slog.Logger, source string) func(suffix string, args ...any) {
+	if logger == nil || source == "" {
+		return func(_ string, _ ...any) {}
+	}
+
+	return func(suffix string, args ...any) {
+		logger.Debug(source+suffix, args...)
+	}
+}
+
+// determineStructureFailureReason provides detailed reason for structure validation failure.
+func determineStructureFailureReason(host string) string {
+	if strings.HasPrefix(host, ".") {
+		return "starts_with_dot"
+	}
+
+	if strings.HasPrefix(host, "-") {
+		return "starts_with_hyphen"
+	}
+
+	if strings.HasSuffix(host, "-") {
+		return "ends_with_hyphen"
+	}
+
+	if strings.Contains(host, "..") {
+		return "contains_double_dot"
+	}
+
+	if strings.Contains(host, "--") {
+		return "contains_double_hyphen"
+	}
+
+	return "unknown"
+}
+
+// determineLabelFailureReason provides detailed reason for label validation failure.
+func determineLabelFailureReason(host string) string {
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return "insufficient_labels"
+	}
+
+	for idx, label := range labels {
+		if reason := checkLabelValidity(label, idx == len(labels)-1); reason != "" {
+			return reason
+		}
+	}
+
+	return "unknown"
+}
+
+// checkLabelValidity checks if a label is valid and returns failure reason if invalid.
+func checkLabelValidity(label string, isTLD bool) string {
+	if !isValidLabel(label) {
+		if len(label) < 1 {
+			return "empty_label"
+		}
+
+		if len(label) > maxLabelLength {
+			return "label_too_long"
+		}
+
+		if label[0] == '-' {
+			return "label_starts_with_hyphen"
+		}
+
+		if label[len(label)-1] == '-' {
+			return "label_ends_with_hyphen"
+		}
+	}
+
+	// Final label (TLD) validation
+	if isTLD {
+		if len(label) < 2 {
+			return "tld_too_short"
+		}
+
+		if isAllNumeric(label) {
+			return "tld_all_numeric"
+		}
+	}
+
+	return ""
+}
+
+// hasValidLength checks if host length is within acceptable bounds.
+func hasValidLength(host string) bool {
+	return len(host) >= minValidHostLength && len(host) <= maxHostLength
+}
+
+// hasValidCharacters checks if all characters are valid DNS characters.
+func hasValidCharacters(host string) bool {
+	for _, r := range host {
+		if !isValidDNSChar(r) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// hasValidStructure checks for malformed patterns like leading/trailing dots or double characters.
+func hasValidStructure(host string) bool {
+	if strings.HasPrefix(host, ".") || strings.HasPrefix(host, "-") {
+		return false
+	}
+
+	if strings.HasSuffix(host, "-") {
+		return false
+	}
+
+	if strings.Contains(host, "..") || strings.Contains(host, "--") {
+		return false
+	}
+
+	return true
+}
+
+// hasValidLabels validates all DNS labels including TLD requirements.
+func hasValidLabels(host string) bool {
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return false
+	}
+
+	for idx, label := range labels {
+		if !isValidLabel(label) {
+			return false
+		}
+
+		// Final label (TLD) must be at least 2 characters and not all numeric
+		if idx == len(labels)-1 {
+			if !isValidTLD(label) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// isValidTLD checks if a TLD meets minimum requirements.
+func isValidTLD(tld string) bool {
+	if len(tld) < 2 {
+		return false
+	}
+
+	if isAllNumeric(tld) {
+		return false
+	}
+
+	return true
+}
+
+// isValidDNSChar returns true if the rune is a valid DNS character (a-z, 0-9, dot, hyphen).
+func isValidDNSChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '-'
+}
+
+// isAllNumeric returns true if the string contains only digits.
+func isAllNumeric(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return len(s) > 0
+}
+
+// isValidLabel validates a single DNS label (between dots).
+func isValidLabel(label string) bool {
+	labelLen := len(label)
+
+	// RFC 1035: label must be 1-63 characters
+	if labelLen < 1 || labelLen > maxLabelLength {
+		return false
+	}
+
+	// Cannot start or end with hyphen
+	if label[0] == '-' || label[labelLen-1] == '-' {
+		return false
+	}
+
+	return true
+}

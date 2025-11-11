@@ -33,44 +33,76 @@ func handleHTTP(conn net.Conn, allowlist []string, opts Options) error {
 		return nil
 	}
 
-	// 1) Parse request line + headers via textproto; extract Host
-	_ = conn.SetReadDeadline(time.Now().Add(connectionReadTimeout))
-	br := bufio.NewReader(conn)
-	host, headBytes, err := readHeadWithTextproto(br)
-	_ = conn.SetReadDeadline(time.Time{})
+	// Parse and validate HTTP request
+	host, headBytes, br, parseErr := parseAndValidateHTTP(conn, tc, opts)
 
-	// Normalise remote client address
-	sourceIP, sourcePort := sourceAddr(conn)
-
-	// Emit synthetic event early if we have a valid host
-	if opts.Logger != nil && host != "" && err == nil {
-		// Recover original destination for synthetic event
-		target, targetErr := originalDstTCP(tc)
-		if targetErr == nil {
-			_ = EmitSynthetic(opts.Logger, "http", conn, target)
-		}
-
-		// Debug: Log host extraction
-		opts.Logger.Debug("http.host_extracted",
-			"host", host,
-			"source_ip", sourceIP,
-			"source_port", sourcePort,
-		)
-	}
-
+	// Check if host is allowed
 	allowed := allowedHost(host, allowlist)
 	if opts.Logger != nil {
 		opts.Logger.Debug("http.allowlist_check", "host", host, "allowed", allowed)
 	}
 
-	if err != nil || host == "" || !allowed {
-		handleBlockedHTTP(conn, tc, host, err, sourceIP, sourcePort, opts)
+	if parseErr != nil || host == "" || !allowed {
+		sourceIP, sourcePort := sourceAddr(conn)
+		handleBlockedHTTP(conn, tc, host, parseErr, sourceIP, sourcePort, opts)
 
 		return nil
 	}
 
 	// Handle allowed host
 	return handleAllowedHTTP(conn, tc, host, headBytes, br, opts)
+}
+
+// parseAndValidateHTTP extracts and validates the HTTP Host header.
+func parseAndValidateHTTP(conn net.Conn, tc *net.TCPConn, opts Options) (string, []byte, *bufio.Reader, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(connectionReadTimeout))
+	br := bufio.NewReader(conn)
+	host, headBytes, err := readHeadWithTextproto(br)
+	_ = conn.SetReadDeadline(time.Time{})
+
+	sourceIP, sourcePort := sourceAddr(conn)
+
+	// Validate and sanitize host
+	host = validateAndSanitizeHost(host, sourceIP, sourcePort, opts)
+
+	// Emit synthetic event if valid
+	if opts.Logger != nil && host != "" && err == nil {
+		emitHTTPSyntheticEvent(conn, tc, host, sourceIP, sourcePort, opts)
+	}
+
+	return host, headBytes, br, err
+}
+
+// validateAndSanitizeHost validates the host and returns sanitized version or empty string.
+func validateAndSanitizeHost(host, sourceIP string, sourcePort int, opts Options) string {
+	sanitized, valid := sanitizeHostWithLogger(host, opts.Logger, "http")
+	if valid {
+		return sanitized
+	}
+
+	if host != "" && opts.Logger != nil {
+		opts.Logger.Debug("http.host_invalid",
+			"raw_host", host,
+			"source_ip", sourceIP,
+			"source_port", sourcePort,
+		)
+	}
+
+	return "" // Treat invalid host as empty
+}
+
+// emitHTTPSyntheticEvent emits a synthetic nflog event for valid HTTP requests.
+func emitHTTPSyntheticEvent(conn net.Conn, tc *net.TCPConn, host, sourceIP string, sourcePort int, opts Options) {
+	target, targetErr := originalDstTCP(tc)
+	if targetErr == nil {
+		_ = EmitSynthetic(opts.Logger, "http", conn, target)
+	}
+
+	opts.Logger.Debug("http.host_extracted",
+		"host", host,
+		"source_ip", sourceIP,
+		"source_port", sourcePort,
+	)
 }
 
 // handleBlockedHTTP handles HTTP requests that are blocked.

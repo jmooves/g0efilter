@@ -19,6 +19,9 @@ func (s *Server) processPayloads(ctx context.Context, payloads []map[string]any,
 	isProbe := false
 
 	for _, in := range payloads {
+		// Sanitize domain/hostname fields before processing
+		SanitizePayloadFields(in)
+
 		// Check if this is a probe message
 		if msg, ok := in["msg"].(string); ok && (msg == "_dashboard_probe" || strings.HasPrefix(msg, "_dashboard_")) {
 			isProbe = true
@@ -214,4 +217,74 @@ func getIntFromPayload(in map[string]any, key string) int {
 	}
 
 	return 0
+}
+
+const invalidDomainPlaceholder = "[invalid]"
+
+// SanitizeDomainField validates and sanitizes domain/hostname fields to prevent log injection.
+// Returns sanitized value or invalidDomainPlaceholder if validation fails.
+func SanitizeDomainField(value string) string {
+	if value == "" {
+		return value
+	}
+
+	if !isValidDomainChars(value) {
+		return invalidDomainPlaceholder
+	}
+
+	if hasSuspiciousPatterns(value) {
+		return invalidDomainPlaceholder
+	}
+
+	// Limit length to prevent memory issues
+	const maxFieldLength = 255
+	if len(value) > maxFieldLength {
+		return invalidDomainPlaceholder
+	}
+
+	return value
+}
+
+// isValidDomainChars checks if all characters are valid for domain/hostname fields.
+func isValidDomainChars(value string) bool {
+	for _, r := range value {
+		// Allow only printable ASCII (excluding control chars)
+		// Allow: a-z A-Z 0-9 . - _ (common in domains/hosts)
+		if r < 32 || r > 126 { // Control chars or non-ASCII
+			return false
+		}
+		// Block specific dangerous chars for log injection
+		if r == '\n' || r == '\r' || r == '\t' || r == '\x00' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// hasSuspiciousPatterns checks for common injection patterns.
+func hasSuspiciousPatterns(value string) bool {
+	return strings.Contains(value, "..") ||
+		strings.Contains(value, "\r\n") ||
+		strings.Contains(value, "<script") ||
+		strings.HasPrefix(value, "-") ||
+		strings.HasPrefix(value, ".")
+}
+
+// SanitizePayloadFields sanitizes known domain/hostname fields in the payload map.
+func SanitizePayloadFields(payload map[string]any) {
+	// List of fields that should contain domain names or hostnames
+	domainFields := []string{
+		"host",     // HTTP Host header
+		"https",    // HTTPS SNI
+		"qname",    // DNS query name
+		"hostname", // Generic hostname
+		"domain",   // Generic domain
+	}
+
+	for _, field := range domainFields {
+		if value, ok := payload[field].(string); ok {
+			payload[field] = SanitizeDomainField(value)
+		}
+	}
 }

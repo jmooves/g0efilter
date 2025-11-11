@@ -114,6 +114,50 @@ type dnsHandler struct {
 	timeout   time.Duration
 }
 
+// sanitizeAndLogQname validates and sanitizes DNS query name, logging the result.
+// Returns the sanitized qname (or empty string if invalid).
+func (handler *dnsHandler) sanitizeAndLogQname(
+	lg *slog.Logger,
+	rawQname string,
+	qtype uint16,
+	remoteAddr string,
+	remotePort int,
+) string {
+	qname := strings.TrimSuffix(rawQname, ".")
+
+	// Validate and sanitize DNS query name before using in logs
+	sanitizedQname, valid := sanitizeHostWithLogger(qname, lg, "dns")
+	if !valid && qname != "" {
+		// Query name present but invalid - log and treat as blocked
+		if lg != nil {
+			lg.Debug("dns.qname_invalid",
+				"raw_qname", qname,
+				"qtype", typeString(qtype),
+				"source_ip", remoteAddr,
+				"source_port", remotePort,
+			)
+		}
+
+		return "" // Treat invalid qname as empty
+	}
+
+	if valid {
+		qname = sanitizedQname
+	}
+
+	// Debug: Log DNS query details
+	if lg != nil {
+		lg.Debug("dns.query",
+			"qname", qname,
+			"qtype", typeString(qtype),
+			"source_ip", remoteAddr,
+			"source_port", remotePort,
+		)
+	}
+
+	return qname
+}
+
 // handle processes incoming DNS requests and enforces the allowlist policy.
 func (handler *dnsHandler) handle(writer dns.ResponseWriter, request *dns.Msg) {
 	lg := handler.opts.Logger
@@ -128,18 +172,8 @@ func (handler *dnsHandler) handle(writer dns.ResponseWriter, request *dns.Msg) {
 	}
 
 	question := request.Question[0]
-	qname := strings.TrimSuffix(question.Name, ".")
+	qname := handler.sanitizeAndLogQname(lg, question.Name, question.Qtype, remoteAddr, remotePort)
 	qtype := question.Qtype
-
-	// Debug: Log DNS query details
-	if lg != nil {
-		lg.Debug("dns.query",
-			"qname", qname,
-			"qtype", typeString(qtype),
-			"source_ip", remoteAddr,
-			"source_port", remotePort,
-		)
-	}
 
 	enforce := (qtype == dns.TypeA || qtype == dns.TypeAAAA)
 	allowed := allowedHost(qname, handler.allowlist)
