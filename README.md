@@ -85,6 +85,7 @@ allowlist:
 | `NOTIFICATION_HOST`            | Gotify server URL for security alert notifications | unset               |
 | `NOTIFICATION_KEY`             | Gotify application key for authentication          | unset               |
 | `NOTIFICATION_BACKOFF_SECONDS` | Rate limit backoff period for duplicate alerts (in seconds) | `60`                |
+| `NOTIFICATION_IGNORE_DOMAINS`  | Comma-separated list of domains to ignore for notifications (supports wildcards like `*.example.com`) | unset               |
 
 ### g0efilter-dashboard
 
@@ -225,6 +226,24 @@ services:
     command: >
       sh -c "apk add --no-cache curl && tail -f /dev/null"
     network_mode: "service:g0efilter"
+```
+
+### Verifying the Container Signatures
+
+The g0efilter container images are signed with [Cosign](https://github.com/sigstore/cosign) using keyless signing:
+
+```bash
+# Verify g0efilter container
+cosign verify g0lab/g0efilter:latest \
+  --certificate-identity-regexp=https://github.com/g0lab/g0efilter \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  -o text
+
+# Verify g0efilter-dashboard container
+cosign verify g0lab/g0efilter-dashboard:latest \
+  --certificate-identity-regexp=https://github.com/g0lab/g0efilter \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  -o text
 ```
 
 ## License

@@ -26,6 +26,9 @@ type Notifier struct {
 	mu            sync.RWMutex
 	recentAlerts  map[string]time.Time
 	backoffPeriod time.Duration
+
+	// Ignore list to suppress notifications for specific domains
+	ignoreList []string
 }
 
 // NewNotifier creates a new notification client. Returns nil if not configured.
@@ -59,6 +62,9 @@ func NewNotifier() *Notifier {
 		}
 	}
 
+	// Load optional ignore list
+	ignoreList := loadIgnoreList()
+
 	return &Notifier{
 		host:          host,
 		token:         token,
@@ -66,6 +72,7 @@ func NewNotifier() *Notifier {
 		enabled:       true,
 		recentAlerts:  make(map[string]time.Time),
 		backoffPeriod: backoffPeriod,
+		ignoreList:    ignoreList,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
@@ -75,6 +82,42 @@ func NewNotifier() *Notifier {
 			},
 		},
 	}
+}
+
+// loadIgnoreList reads the notification ignore list from NOTIFICATION_IGNORE_DOMAINS environment variable.
+// Expects comma-separated list of domains (supports wildcards like *.example.com).
+// Returns nil if not configured.
+func loadIgnoreList() []string {
+	ignoreDomains := strings.TrimSpace(os.Getenv("NOTIFICATION_IGNORE_DOMAINS"))
+	if ignoreDomains == "" {
+		return nil
+	}
+
+	parts := strings.Split(ignoreDomains, ",")
+	patterns := make([]string, 0, len(parts))
+
+	for _, domain := range parts {
+		domain = strings.TrimSpace(domain)
+		if domain == "" {
+			continue
+		}
+
+		// Normalize: convert to lowercase for case-insensitive matching
+		domain = strings.ToLower(domain)
+
+		// Basic validation: reject patterns with whitespace
+		if strings.Contains(domain, " ") || strings.Contains(domain, "\t") {
+			continue
+		}
+
+		patterns = append(patterns, domain)
+	}
+
+	if len(patterns) == 0 {
+		return nil
+	}
+
+	return patterns
 }
 
 // BlockedConnectionInfo contains details about a blocked connection.
@@ -102,12 +145,34 @@ func (n *Notifier) NotifyBlock(ctx context.Context, info BlockedConnectionInfo) 
 		info.Component = "tcp"
 	}
 
+	// Check if destination is in ignore list
+	if n.isIgnored(info.Destination) {
+		return // Skip notification for ignored domain
+	}
+
 	// Check rate limiting - don't spam the same alert
 	if !n.shouldSendAlert(info) {
 		return // Skip notification due to rate limiting
 	}
 
 	go n.sendNotification(ctx, info)
+}
+
+// matchesPattern checks if a destination matches a pattern (supports wildcard prefix *.domain.com).
+func matchesPattern(destination, pattern string) bool {
+	// Exact match
+	if destination == pattern {
+		return true
+	}
+
+	// Wildcard pattern: *.example.com matches sub.example.com but not example.com
+	if strings.HasPrefix(pattern, "*.") {
+		suffix := strings.TrimPrefix(pattern, "*")
+
+		return strings.HasSuffix(destination, suffix)
+	}
+
+	return false
 }
 
 // Close releases notifier resources and stops sending new alerts.
@@ -125,6 +190,24 @@ func (n *Notifier) Close() {
 	n.mu.Lock()
 	n.recentAlerts = nil
 	n.mu.Unlock()
+}
+
+// isIgnored checks if a destination matches any pattern in the ignore list.
+func (n *Notifier) isIgnored(destination string) bool {
+	if len(n.ignoreList) == 0 || destination == "" {
+		return false
+	}
+
+	// Normalize destination for comparison
+	destination = strings.ToLower(destination)
+
+	for _, pattern := range n.ignoreList {
+		if matchesPattern(destination, pattern) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // shouldSendAlert returns false if an alert was recently sent for this connection to prevent notification spam.
