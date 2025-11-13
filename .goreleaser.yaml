@@ -124,7 +124,7 @@ signs:
 
 docker_signs:
   - cmd: cosign
-    artifacts: manifests
+    artifacts: all
     args:
       - sign
       - ${artifact}@${digest}
