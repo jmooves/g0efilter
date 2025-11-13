@@ -664,3 +664,164 @@ func createTempFile(t *testing.T, content string) string {
 
 	return tmpFile
 }
+
+func TestLoadFromEnv(t *testing.T) {
+	t.Parallel()
+
+	tests := getLoadFromEnvTests()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ips, domains, err := loadFromEnv(nil, tt.envIPs, tt.envDomains)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("loadFromEnv() = nil, want error")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Errorf("loadFromEnv() = %v, want nil", err)
+
+				return
+			}
+
+			if !stringSlicesEqual(ips, tt.expectedIPs) {
+				t.Errorf("loadFromEnv() IPs = %v, want %v", ips, tt.expectedIPs)
+			}
+
+			if !stringSlicesEqual(domains, tt.expectedDomains) {
+				t.Errorf("loadFromEnv() domains = %v, want %v", domains, tt.expectedDomains)
+			}
+		})
+	}
+}
+
+type envTestCase struct {
+	name            string
+	envIPs          string
+	envDomains      string
+	expectedIPs     []string
+	expectedDomains []string
+	wantErr         bool
+}
+
+func getLoadFromEnvTests() []envTestCase {
+	return []envTestCase{
+		{"Both IPs and domains", "1.1.1.1,8.8.8.8", "google.com,*.github.com",
+			[]string{"1.1.1.1", "8.8.8.8"}, []string{"google.com", "*.github.com"}, false},
+		{"Only IPs", "192.168.1.0/24,10.0.0.1", "",
+			[]string{"192.168.1.0/24", "10.0.0.1"}, nil, false},
+		{"Only domains", "", "example.com,*.cloudflare.com",
+			nil, []string{"example.com", "*.cloudflare.com"}, false},
+		{"Empty values", "", "", nil, nil, false},
+		{"Whitespace trimming", " 1.1.1.1 , 8.8.8.8 ", " google.com , *.github.com ",
+			[]string{"1.1.1.1", "8.8.8.8"}, []string{"google.com", "*.github.com"}, false},
+		{"Skip empty entries", "1.1.1.1,,8.8.8.8", "google.com,,*.github.com",
+			[]string{"1.1.1.1", "8.8.8.8"}, []string{"google.com", "*.github.com"}, false},
+		{"Invalid IP", "1.1.1.1,invalid-ip", "google.com", nil, nil, true},
+		{"Invalid domain", "1.1.1.1", "google.com,invalid domain with spaces", nil, nil, true},
+	}
+}
+
+func TestReadPolicyWithEnvVars(t *testing.T) {
+	tests := getReadPolicyWithEnvVarsTests()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set environment variables
+			t.Setenv("ALLOWLIST_IPS", tt.envIPs)
+			t.Setenv("ALLOWLIST_DOMAINS", tt.envDomains)
+
+			// Create temp policy file
+			tmpFile := createTempFile(t, tt.policyContent)
+
+			ips, domains, err := ReadPolicy(tmpFile)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ReadPolicy() = nil, want error")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Errorf("ReadPolicy() = %v, want nil", err)
+
+				return
+			}
+
+			if !stringSlicesEqual(ips, tt.expectedIPs) {
+				t.Errorf("ReadPolicy() IPs = %v, want %v", ips, tt.expectedIPs)
+			}
+
+			if !stringSlicesEqual(domains, tt.expectedDomains) {
+				t.Errorf("ReadPolicy() domains = %v, want %v", domains, tt.expectedDomains)
+			}
+		})
+	}
+} // policyTestCase defines test case structure for ReadPolicy with environment variables.
+type policyTestCase struct {
+	name            string
+	envIPs          string
+	envDomains      string
+	policyContent   string
+	expectedIPs     []string
+	expectedDomains []string
+	wantErr         bool
+}
+
+func getReadPolicyWithEnvVarsTests() []policyTestCase {
+	filePolicy := `allowlist:
+  ips:
+    - "192.168.1.1"
+  domains:
+    - "file.example.com"`
+
+	return []policyTestCase{
+		{
+			"Env vars take precedence over file", "1.1.1.1", "env.example.com",
+			filePolicy, []string{"1.1.1.1"}, []string{"env.example.com"}, false,
+		},
+		{
+			"Fall back to file when env vars empty", "", "",
+			filePolicy, []string{"192.168.1.1"}, []string{"file.example.com"}, false,
+		},
+		{
+			"Only IP env var set", "1.1.1.1,8.8.8.8", "",
+			filePolicy, []string{"1.1.1.1", "8.8.8.8"}, nil, false,
+		},
+		{
+			"Only domain env var set", "", "env.example.com,*.github.com",
+			filePolicy, nil, []string{"env.example.com", "*.github.com"}, false,
+		},
+	}
+}
+
+// stringSlicesEqual compares two string slices for equality, handling nil cases.
+func stringSlicesEqual(a, b []string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+
+	if a == nil || b == nil {
+		return false
+	}
+
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}

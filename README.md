@@ -61,6 +61,11 @@ allowlist:
     - "*.alpinelinux.org"
 ```
 
+> [!NOTE]
+> You can also specify the allowlist using environment variables instead of a policy file.  
+> Set `ALLOWLIST_IPS` and/or `ALLOWLIST_DOMAINS` as comma-separated lists.  
+> Environment variables take precedence over the policy file if both are present.
+
 ### Environment variables
 
 ### g0efilter
@@ -72,6 +77,8 @@ allowlist:
 | `HTTP_PORT`         | Local HTTP port                                    | `8080`              |
 | `HTTPS_PORT`        | Local HTTPS port                                   | `8443`              |
 | `POLICY_PATH`       | Path to policy file inside container               | `/app/policy.yaml`  |
+| `ALLOWLIST_IPS`     | Comma-separated list of allowed IPs/CIDRs (takes precedence over policy file) | unset               |
+| `ALLOWLIST_DOMAINS` | Comma-separated list of allowed domains (takes precedence over policy file, supports wildcards like `*.example.com`) | unset               |
 | `FILTER_MODE`       | `https` (TLS SNI/HTTP Host) or `dns` (DNS name filtering)      | `https`             |
 | `DNS_PORT`          | DNS listen port                                    | `53`                |
 | `DNS_UPSTREAMS`     | Upstream DNS servers (comma-separated). Uses Docker's default DNS if not specified | `127.0.0.11:53`     |

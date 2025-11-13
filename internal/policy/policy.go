@@ -245,12 +245,29 @@ func loadConfig(file string) (Config, error) {
 	return cfg, nil
 }
 
-// ReadPolicy loads and validates the allowlist policy file, returning normalized IPs and domains.
+// ReadPolicy loads and validates the allowlist policy, first checking environment variables,
+// then falling back to the policy file if env vars are not set. Returns normalized IPs and domains.
 func ReadPolicy(file string) ([]string, []string, error) {
 	lg := slog.Default()
-	if lg != nil {
-		lg.Debug("policy.read_start", "component", "policy", "file", strings.TrimSpace(file))
+
+	logDebug := func(msg string, args ...any) {
+		if lg != nil {
+			lg.Debug(msg, args...)
+		}
 	}
+
+	// Try to load from environment variables first
+	envIPs := strings.TrimSpace(os.Getenv("ALLOWLIST_IPS"))
+	envDomains := strings.TrimSpace(os.Getenv("ALLOWLIST_DOMAINS"))
+
+	if envIPs != "" || envDomains != "" {
+		logDebug("policy.read_start", "component", "policy", "source", "environment")
+
+		return loadFromEnv(lg, envIPs, envDomains)
+	}
+
+	// Fall back to file-based policy
+	logDebug("policy.read_start", "component", "policy", "source", "file", "file", strings.TrimSpace(file))
 
 	cfg, err := loadConfig(file)
 	if err != nil {
@@ -272,16 +289,76 @@ func ReadPolicy(file string) ([]string, []string, error) {
 		return nil, nil, err
 	}
 
+	logDebug("policy.read_ok",
+		"component", "policy",
+		"source", "file",
+		"file", file,
+		"ip_count", len(cleanIPs),
+		"domain_count", len(cleanDomains),
+	)
+
+	return cleanIPs, cleanDomains, nil
+}
+
+// loadFromEnv loads and validates allowlist policy from environment variables.
+// ALLOWLIST_IPS and ALLOWLIST_DOMAINS are comma-separated lists.
+func loadFromEnv(lg *slog.Logger, envIPs, envDomains string) ([]string, []string, error) {
+	// Parse IPs from comma-separated list
+	rawIPs := parseCommaSeparated(envIPs)
+
+	// Parse domains from comma-separated list
+	rawDomains := parseCommaSeparated(envDomains)
+
+	// Validate IPs
+	cleanIPs, err := validateIPs(lg, "env:ALLOWLIST_IPS", rawIPs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Validate domains
+	cleanDomains, err := validateDomains(lg, "env:ALLOWLIST_DOMAINS", rawDomains)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Return nil for empty slices to match file-based behavior
+	if len(cleanIPs) == 0 {
+		cleanIPs = nil
+	}
+
+	if len(cleanDomains) == 0 {
+		cleanDomains = nil
+	}
+
 	if lg != nil {
 		lg.Debug("policy.read_ok",
 			"component", "policy",
-			"file", file,
+			"source", "environment",
 			"ip_count", len(cleanIPs),
 			"domain_count", len(cleanDomains),
 		)
 	}
 
 	return cleanIPs, cleanDomains, nil
+}
+
+// parseCommaSeparated parses a comma-separated string into a slice, trimming whitespace.
+func parseCommaSeparated(input string) []string {
+	if input == "" {
+		return nil
+	}
+
+	parts := strings.Split(input, ",")
+	result := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+
+	return result
 }
 
 // validateIPs validates and filters a list of IP addresses, logging and rejecting invalid entries.
