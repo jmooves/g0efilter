@@ -1,3 +1,4 @@
+---
 version: "2"
 
 formatters:
@@ -7,10 +8,10 @@ formatters:
 linters:
   default: all
   disable:
-    - wsl # Deprecated
-    - varnamelen # Too strict
-    - exhaustruct # Too strict
-    - mnd # Too strict
+    - wsl  # Deprecated
+    - varnamelen  # Too strict
+    - exhaustruct  # Too strict
+    - mnd  # Too strict
 
   settings:
     depguard:

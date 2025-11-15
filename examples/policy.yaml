@@ -1,8 +1,9 @@
+---
 allowlist:
   ips:
-  - "1.1.1.1"
-  - "192.168.0.0/16"
-  - "10.1.1.1"
+    - "1.1.1.1"
+    - "192.168.0.0/16"
+    - "10.1.1.1"
   domains:
-  - "github.com"
-  - "*.alpinelinux.org"
+    - "github.com"
+    - "*.alpinelinux.org"

@@ -1,3 +1,4 @@
+---
 version: 2
 
 project_name: g0efilter
@@ -14,7 +15,7 @@ builds:
     env: ["CGO_ENABLED=0"]
     goos: [linux]
     goarch: [amd64, arm64]
-    flags: ["-trimpath"]   
+    flags: ["-trimpath"]
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
@@ -27,7 +28,7 @@ builds:
     env: ["CGO_ENABLED=0"]
     goos: [linux]
     goarch: [amd64, arm64]
-    flags: ["-trimpath"]   
+    flags: ["-trimpath"]
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
@@ -76,14 +77,14 @@ release:
   github:
     owner: g0lab
     name: g0efilter
-  draft: false          
+  draft: false
   prerelease: auto
 
 changelog:
-  use: github 
-  format: "{{ .SHA }}: {{ .Message }}{{ with .AuthorUsername }} (@{{ . }}){{ end }}"       
+  use: github
+  format: "{{ .SHA }}: {{ .Message }}{{ with .AuthorUsername }} (@{{ . }}){{ end }}"
   sort: asc
-  groups:                     
+  groups:
     - title: "Added"
       regexp: '^\s*feat(\([^)]+\))?!?:\s+.+$'
       order: 100
@@ -114,13 +115,14 @@ changelog:
 signs:
   - cmd: cosign
     artifacts: checksum
-    signature: "${artifact}.sigstore" 
+    signature: "${artifact}.sigstore"
     args:
       - sign-blob
       - --bundle=${artifact}.sigstore
       - ${artifact}
       - --yes
     output: true
+
 
 docker_signs:
   - cmd: cosign

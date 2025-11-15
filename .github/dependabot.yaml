@@ -3,13 +3,14 @@
 # Please see the documentation for all configuration options:
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
+---
 version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "daily"
-    labels: [ "dependencies", "github-actions" ]
+    labels: ["dependencies", "github-actions"]
     commit-message:
       prefix: "deps"
       include: "scope"
@@ -18,7 +19,7 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
-    labels: [ "dependencies", "gomod" ]
+    labels: ["dependencies", "gomod"]
     commit-message:
       prefix: "deps"
       include: "scope"
@@ -27,7 +28,7 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
-    labels: [ "dependencies", "docker" ]
+    labels: ["dependencies", "docker"]
     commit-message:
       prefix: "deps"
       include: "scope"

@@ -1,3 +1,4 @@
+---
 services:
   g0efilter:
     image: docker.io/g0lab/g0efilter:latest
@@ -7,12 +8,12 @@ services:
     cap_drop:
       - ALL
     cap_add:
-      - NET_ADMIN # Required for nftables modification
+      - NET_ADMIN  # Required for nftables modification
     security_opt:
       - no-new-privileges
     # Host-exposed port for dashboard (dashboard runs in same netns)
     ports:
-      - 8081:8081 # Dashboard port
+      - 8081:8081  # Dashboard port
     read_only: true
     restart: always
     env_file:
