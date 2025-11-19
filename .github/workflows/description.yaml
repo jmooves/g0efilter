@@ -1,0 +1,32 @@
+---
+name: dockerhub-description
+
+on:
+  push:
+    paths:
+      - 'README.md'
+      - '.github/workflows/description.yaml'
+    branches:
+      - 'main'
+  workflow_dispatch:
+
+jobs:
+  update-description:
+    environment: dockerhub
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: g0lab/g0efilter
+
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: g0lab/g0efilter-dashboard
