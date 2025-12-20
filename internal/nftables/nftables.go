@@ -122,6 +122,10 @@ func ApplyNftRules(allowlist []string, httpsPortStr, httpPortStr, dnsPortStr str
 		mode = filter.ModeHTTPS
 	}
 
+	if len(allowlist) == 0 {
+		allowlist = []string{"127.0.0.1"}
+	}
+
 	httpsPort, err := parsePort(httpsPortStr, "HTTPS")
 	if err != nil {
 		return err
