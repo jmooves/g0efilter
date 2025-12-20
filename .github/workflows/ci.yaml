@@ -7,12 +7,21 @@ on:
       - '**'
     tags-ignore:
       - '**'
-    paths-ignore:
-      - '.github/**'
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+
   pull_request:
-    paths-ignore:
-      - '.github/**'
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+
   workflow_dispatch: {}
+
   schedule:
     - cron: '0 3 * * *'
 
