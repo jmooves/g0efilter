@@ -24,7 +24,7 @@ jobs:
           ---
           allowlist:
             ips:
-              - "9.9.9.9"
+              - "1.1.1.1"
             domains:
               - "github.com"
           EOF
@@ -45,28 +45,68 @@ jobs:
           set -e
           COMPOSE="docker compose -f docker-compose-build.yaml"
 
-          echo "1) google.com should FAIL"
-          if $COMPOSE exec tester sh -lc 'curl -sS --max-time 5 https://google.com'; then
-            echo "ERROR: google.com succeeded but should be blocked"
+          echo "1) https://github.com should SUCCEED"
+          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 https://github.com -o /dev/null"; then
+            echo "ERROR: https://github.com was blocked but should be allowed"
             exit 1
           else
-            echo "OK: google.com blocked"
+            echo "OK: https://github.com allowed"
           fi
 
-          echo "2) github.com should SUCCEED"
-          $COMPOSE exec tester sh -lc 'curl -sS --max-time 10 https://github.com -o /dev/null'
-          echo "OK: github.com allowed"
-
-          echo "3) ping 9.9.9.9 should SUCCEED"
-          $COMPOSE exec tester sh -lc 'ping -c 3 9.9.9.9'
-          echo "OK: 9.9.9.9 reachable"
-
-          echo "4) ping 1.1.1.1 should FAIL"
-          if $COMPOSE exec tester sh -lc 'ping -c 3 1.1.1.1'; then
-            echo "ERROR: 1.1.1.1 ping succeeded but should be blocked"
+          echo "2) http://github.com should SUCCEED"
+          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 http://github.com -o /dev/null"; then
+            echo "ERROR: http://github.com was blocked but should be allowed"
             exit 1
           else
-            echo "OK: 1.1.1.1 blocked"
+            echo "OK: http://github.com allowed"
+          fi
+
+          echo "3) https://1.1.1.1 should SUCCEED (IP allowlist)"
+          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 https://1.1.1.1 -o /dev/null"; then
+            echo "ERROR: https://1.1.1.1 was blocked but should be allowed"
+            exit 1
+          else
+            echo "OK: https://1.1.1.1 allowed"
+          fi
+
+          echo "4) http://1.1.1.1 should SUCCEED (IP allowlist)"
+          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 http://1.1.1.1 -o /dev/null"; then
+            echo "ERROR: http://1.1.1.1 was blocked but should be allowed"
+            exit 1
+          else
+            echo "OK: http://1.1.1.1 allowed"
+          fi
+
+          echo "5) https://google.com should FAIL"
+          if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 https://google.com -o /dev/null"; then
+            echo "ERROR: https://google.com succeeded but should be blocked"
+            exit 1
+          else
+            echo "OK: https://google.com blocked"
+          fi
+
+          echo "6) http://google.com should FAIL"
+          if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 http://google.com -o /dev/null"; then
+            echo "ERROR: http://google.com succeeded but should be blocked"
+            exit 1
+          else
+            echo "OK: http://google.com blocked"
+          fi
+
+          echo "7) https://1.0.0.1 should FAIL"
+          if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 https://1.0.0.1 -o /dev/null"; then
+            echo "ERROR: https://1.0.0.1 succeeded but should be blocked"
+            exit 1
+          else
+            echo "OK: https://1.0.0.1 blocked"
+          fi
+
+          echo "8) http://1.0.0.1 should FAIL"
+          if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 http://1.0.0.1 -o /dev/null"; then
+            echo "ERROR: http://1.0.0.1 succeeded but should be blocked"
+            exit 1
+          else
+            echo "OK: http://1.0.0.1 blocked"
           fi
 
       - name: Tear down stack
