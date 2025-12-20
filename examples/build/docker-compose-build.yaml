@@ -1,9 +1,8 @@
----
 services:
   g0efilter:
     build:
-      context: ..
-      dockerfile: test/Dockerfile
+      context: ../..
+      dockerfile: examples/build/Dockerfile
     container_name: g0efilter
     volumes:
       - ./policy.yaml:/app/policy.yaml:ro
@@ -13,14 +12,14 @@ services:
       - no-new-privileges
     read_only: true
     env_file:
-      - .env
+      - ../.env
     cap_add:
       - NET_ADMIN
 
   g0efilter-dashboard:
     build:
-      context: ..
-      dockerfile: test/Dockerfile.dashboard
+      context: ../..
+      dockerfile: examples/build/Dockerfile.dashboard
     container_name: g0efilter-dashboard
     cap_drop:
       - ALL
@@ -28,7 +27,7 @@ services:
       - no-new-privileges
     read_only: true
     env_file:
-      - .env.dashboard
+      - ../.env.dashboard
     network_mode: "service:g0efilter"
 
   tester:
