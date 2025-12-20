@@ -1,4 +1,5 @@
-name: g0efilter network tests
+---
+name: g0efilter Network Tests
 
 on:
   workflow_dispatch:
@@ -109,8 +110,8 @@ jobs:
             echo "OK: http://1.0.0.1 blocked"
           fi
 
-      - name: Tear down stack
-        if: always()
-        working-directory: examples/build
-        run: |
-          docker compose -f docker-compose-build.yaml down -v
+      # - name: Tear down stack
+      #   if: always()
+      #   working-directory: examples/build
+      #   run: |
+      #     docker compose -f docker-compose-build.yaml down -v
