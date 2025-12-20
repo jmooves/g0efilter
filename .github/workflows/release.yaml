@@ -153,12 +153,6 @@ jobs:
             echo "OK: http://1.0.0.1 blocked"
           fi
 
-      # - name: Tear down g0efilter stack
-      #   if: always()
-      #   working-directory: examples/build
-      #   run: |
-      #     docker compose -f docker-compose-build.yaml down -v
-
       # Release steps (only run if everything above passed)
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
