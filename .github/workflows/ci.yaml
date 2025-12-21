@@ -90,18 +90,6 @@ jobs:
       - name: Set up Docker Compose
         uses: docker/setup-compose-action@v1
 
-      - name: Write policy file
-        working-directory: examples/build
-        run: |
-          cat > policy.yaml << 'EOF'
-          ---
-          allowlist:
-            ips:
-              - "1.1.1.1"
-            domains:
-              - "github.com"
-          EOF
-
       - name: Bring up g0efilter stack
         working-directory: examples/build
         run: |
