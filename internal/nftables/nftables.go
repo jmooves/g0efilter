@@ -71,12 +71,10 @@ func ApplyNftRulesAuto(allowlist []string, httpsPortStr, httpPortStr string) err
 	return ApplyNftRules(allowlist, httpsPortStr, httpPortStr, dnsPortStr)
 }
 
-// validateAndParseRuleset validates nftables ruleset syntax without applying it.
-func validateAndParseRuleset(ruleset string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func validateAndParseRuleset(ctx context.Context, ruleset string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// nft -c -f -  (check only, does not modify kernel rules)
 	cmd := exec.CommandContext(ctx, "nft", "-c", "-f", "-")
 	cmd.Stdin = strings.NewReader(ruleset)
 
@@ -93,12 +91,10 @@ func validateAndParseRuleset(ruleset string) error {
 	return nil
 }
 
-// applyRuleset applies the given nftables ruleset to the kernel.
-func applyRuleset(ruleset string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func applyRuleset(ctx context.Context, ruleset string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// nft -f - (apply)
 	cmd := exec.CommandContext(ctx, "nft", "-f", "-")
 	cmd.Stdin = strings.NewReader(ruleset)
 
@@ -115,8 +111,13 @@ func applyRuleset(ruleset string) error {
 	return nil
 }
 
-// ApplyNftRules validates and applies nftables rules for the specified filter mode and ports.
-func ApplyNftRules(allowlist []string, httpsPortStr, httpPortStr, dnsPortStr string) error {
+// ApplyNftRulesWithContext generates and applies the nftables ruleset using the provided context.
+func ApplyNftRulesWithContext(
+	ctx context.Context,
+	allowlist []string,
+	httpsPortStr,
+	httpPortStr,
+	dnsPortStr string) error {
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv("FILTER_MODE")))
 	if mode == "" {
 		mode = filter.ModeHTTPS
@@ -146,16 +147,20 @@ func ApplyNftRules(allowlist []string, httpsPortStr, httpPortStr, dnsPortStr str
 		ruleset += "\n"
 	}
 
-	err = validateAndParseRuleset(ruleset)
+	err = validateAndParseRuleset(ctx, ruleset)
 	if err != nil {
 		return err
 	}
 
-	// Remove old tables (best-effort) then apply for real ---
-	_ = deleteTableIfExists("ip", "filter_v4")
-	_ = deleteTableIfExists("ip", "nat_v4")
+	_ = deleteTableIfExists(ctx, "ip", "filter_v4")
+	_ = deleteTableIfExists(ctx, "ip", "nat_v4")
 
-	return applyRuleset(ruleset)
+	return applyRuleset(ctx, ruleset)
+}
+
+// ApplyNftRules applies nftables rules using a background context.
+func ApplyNftRules(allowlist []string, httpsPortStr, httpPortStr, dnsPortStr string) error {
+	return ApplyNftRulesWithContext(context.Background(), allowlist, httpsPortStr, httpPortStr, dnsPortStr)
 }
 
 // generateDNSFilterRules creates nftables filter rules for DNS mode that block non-allowlisted traffic.
@@ -328,28 +333,26 @@ func GenerateNftRuleset(allowlist []string, httpsPort, httpPort, dnsPort int, mo
 	return filterRules + "\n" + natRules
 }
 
-// deleteTableIfExists removes an nftables table if it exists, returning nil if table doesn't exist.
-func deleteTableIfExists(family, table string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+func deleteTableIfExists(ctx context.Context, family, table string) error {
+	ctxProbe, cancelProbe := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelProbe()
 
-	probe := exec.CommandContext(ctx, "nft", "list", "table", family, table)
+	probe := exec.CommandContext(ctxProbe, "nft", "list", "table", family, table)
 
 	var bout bytes.Buffer
 
 	probe.Stdout = &bout
-
 	probe.Stderr = &bout
 
 	err := probe.Run()
 	if err != nil {
-		return nil // not found; nothing to delete
+		return nil
 	}
 
-	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	ctxDel, cancelDel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancelDel()
 
-	del := exec.CommandContext(ctx, "nft", "delete", "table", family, table)
+	del := exec.CommandContext(ctxDel, "nft", "delete", "table", family, table)
 
 	err = del.Run()
 	if err != nil {

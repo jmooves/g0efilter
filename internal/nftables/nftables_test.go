@@ -1201,7 +1201,7 @@ table ip test_table {
 }
 `
 
-	err := applyRuleset(ruleset)
+	err := applyRuleset(context.Background(), ruleset)
 
 	// We expect an error since nft command likely isn't available in test environment
 	// Just verify the function doesn't panic and handles the command execution
@@ -1216,7 +1216,7 @@ func TestDeleteTableIfExists(t *testing.T) {
 	t.Parallel()
 
 	// Test table deletion (will fail in test environment but shouldn't panic)
-	err := deleteTableIfExists("ip", "nonexistent_table")
+	err := deleteTableIfExists(context.Background(), "ip", "nonexistent_table")
 
 	// Should return nil if table doesn't exist (which is likely in test environment)
 	if err != nil {
