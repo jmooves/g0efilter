@@ -33,7 +33,7 @@ const (
 	defaultIdleTimeout = 600000
 	retryDelay         = 5 * time.Second
 
-	policyPollInterval = 2 * time.Second
+	policyPollInterval = 5 * time.Second
 )
 
 var (
