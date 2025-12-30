@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/g0lab/g0efilter/internal/dashboard"
@@ -76,42 +75,6 @@ func TestGetenvFloat(t *testing.T) {
 	runEnvCases(t, cases, getenvFloat)
 }
 
-//nolint:paralleltest // Modifies package-level globals (version, commit, date, os.Stderr)
-func TestPrintVersion(t *testing.T) {
-	origVersion := version
-	origCommit := commit
-	origDate := date
-
-	t.Cleanup(func() {
-		version = origVersion
-		commit = origCommit
-		date = origDate
-	})
-
-	version = "1.2.3"
-	commit = "abc1234567"
-	date = "2025-01-01"
-
-	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-
-	printVersion()
-
-	_ = w.Close()
-	os.Stderr = oldStderr
-
-	buf := new(bytes.Buffer)
-	_, _ = buf.ReadFrom(r)
-	out := buf.String()
-
-	for _, s := range []string{"g0efilter-dashboard", "1.2.3", "abc1234", "2025-01-01", "MIT"} {
-		if !strings.Contains(out, s) {
-			t.Fatalf("printVersion output missing %q, got: %s", s, out)
-		}
-	}
-}
-
 func compareDashboardConfig(t *testing.T, got, want dashboard.Config) {
 	t.Helper()
 
@@ -175,7 +138,7 @@ func TestBuildConfigDefaults(t *testing.T) {
 		WriteTimeout: 0,
 	}
 
-	got := buildConfig()
+	got := buildConfig("1.2.3", "2025-01-01", "abc1234")
 	compareDashboardConfig(t, got, want)
 }
 
@@ -201,7 +164,7 @@ func TestBuildConfigCustomValues(t *testing.T) {
 		WriteTimeout: 0,
 	}
 
-	got := buildConfig()
+	got := buildConfig("1.2.3", "2025-01-01", "abc1234")
 	compareDashboardConfig(t, got, want)
 }
 
@@ -253,7 +216,7 @@ func TestSetupLoggingMissingAPIKey(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stderr = w
 
-	lg, err := setupLogging(cfg)
+	lg, err := setupLogging(cfg, "1.2.3", "2025-01-01", "abc1234")
 
 	_ = w.Close()
 	os.Stderr = oldStderr

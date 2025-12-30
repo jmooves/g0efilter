@@ -41,28 +41,6 @@ var (
 	errPolicyPathEmpty = errors.New("policy path is empty")
 )
 
-// Set by GoReleaser via ldflags (wired in init()).
-var (
-	version = ""
-	commit  = "" //nolint:gochecknoglobals
-	date    = "" //nolint:gochecknoglobals
-)
-
-//nolint:gochecknoinits
-func init() {
-	if version == "" {
-		version = "0.0.0-dev"
-	}
-
-	if date == "" {
-		date = "unknown"
-	}
-
-	if commit == "" {
-		commit = "none"
-	}
-}
-
 type policyUpdate struct {
 	hash    string
 	domains []string
@@ -70,7 +48,7 @@ type policyUpdate struct {
 }
 
 // Run starts the g0efilter application and blocks until shutdown.
-func Run() error {
+func Run(version, date, commit string) error {
 	cfg := loadConfig()
 
 	lg := logging.NewWithContext(context.Background(), cfg.logLevel, os.Stdout, version)
@@ -78,7 +56,7 @@ func Run() error {
 
 	cfg = normalizeMode(cfg, lg)
 
-	logStartupInfo(lg, cfg)
+	logStartupInfo(lg, cfg, version, date, commit)
 	logDashboardInfo(lg)
 	logNotificationInfo(lg)
 
@@ -127,11 +105,11 @@ func Run() error {
 }
 
 // HandleVersionFlag prints version info and returns true if the process should exit.
-func HandleVersionFlag(args []string) bool {
+func HandleVersionFlag(args []string, version, date, commit string) bool {
 	if len(args) > 1 {
 		arg := args[1]
 		if arg == "--version" || arg == "version" || arg == "-V" || arg == "-v" {
-			printVersion()
+			printVersion(version, date, commit)
 
 			return true
 		}
@@ -268,7 +246,7 @@ func getGoVersion() string {
 	return "unknown"
 }
 
-func printVersion() {
+func printVersion(version, date, commit string) {
 	short := commit
 	if len(short) >= 7 {
 		short = commit[:7]
@@ -279,7 +257,7 @@ func printVersion() {
 	fmt.Fprintf(os.Stderr, "Licensed under the %s license\n", licenseType)
 }
 
-func logStartupInfo(lg *slog.Logger, cfg config) {
+func logStartupInfo(lg *slog.Logger, cfg config, version, date, commit string) {
 	shortCommit := commit
 	if len(shortCommit) > 7 {
 		shortCommit = commit[:7]

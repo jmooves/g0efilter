@@ -33,39 +33,19 @@ const (
 )
 
 var (
-	// Set by GoReleaser via -ldflags.
-	version = ""
-	commit  = "" //nolint:gochecknoglobals
-	date    = "" //nolint:gochecknoglobals
-
 	errMissingAPIKey = errors.New("API_KEY is required but not set")
 )
 
-//nolint:gochecknoinits
-func init() {
-	if version == "" {
-		version = "0.0.0-dev"
-	}
-
-	if date == "" {
-		date = "unknown"
-	}
-
-	if commit == "" {
-		commit = "none"
-	}
-}
-
 // Run is the dashboard entrypoint used by cmd/g0efilter-dashboard.
-func Run(args []string) error {
-	if handleVersionFlag(args) {
+func Run(args []string, version, date, commit string) error {
+	if handleVersionFlag(args, version, date, commit) {
 		return nil
 	}
 
-	cfg := buildConfig()
+	cfg := buildConfig(version, date, commit)
 	normalizeAddr(&cfg)
 
-	lg, err := setupLogging(cfg)
+	lg, err := setupLogging(cfg, version, date, commit)
 	if err != nil {
 		return err
 	}
@@ -115,11 +95,11 @@ func Run(args []string) error {
 	}
 }
 
-func handleVersionFlag(args []string) bool {
+func handleVersionFlag(args []string, version, date, commit string) bool {
 	if len(args) > 1 {
 		switch args[1] {
 		case "--version", "version", "-V", "-v":
-			printVersion()
+			printVersion(version, date, commit)
 
 			return true
 		}
@@ -136,7 +116,7 @@ func getGoVersion() string {
 	return "unknown"
 }
 
-func printVersion() {
+func printVersion(version, date, commit string) {
 	short := commit
 	if len(short) >= 7 {
 		short = commit[:7]
@@ -184,7 +164,7 @@ func getenvFloat(k string, def float64) float64 {
 	return f
 }
 
-func buildConfig() dashboard.Config {
+func buildConfig(version, _, _ string) dashboard.Config {
 	return dashboard.Config{
 		Addr:         getenv("PORT", ":8081"),
 		APIKey:       getenv("API_KEY", ""),
@@ -208,7 +188,7 @@ func normalizeAddr(cfg *dashboard.Config) {
 	}
 }
 
-func setupLogging(cfg dashboard.Config) (*slog.Logger, error) {
+func setupLogging(cfg dashboard.Config, version, date, commit string) (*slog.Logger, error) {
 	lg := logging.NewWithContext(context.Background(), cfg.LogLevel, os.Stdout, version)
 	slog.SetDefault(lg)
 
