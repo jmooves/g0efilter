@@ -3,11 +3,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -28,9 +32,14 @@ const (
 	defaultDialTimeout = 5000
 	defaultIdleTimeout = 600000
 	retryDelay         = 5 * time.Second
+
+	policyPollInterval = 5 * time.Second
 )
 
-var errPortConflict = errors.New("port conflict detected")
+var (
+	errPortConflict    = errors.New("port conflict detected")
+	errPolicyPathEmpty = errors.New("policy path is empty")
+)
 
 // Set by GoReleaser via ldflags.
 var (
@@ -54,25 +63,10 @@ func init() {
 	}
 }
 
-// getGoVersion returns the Go version used to build the binary.
-func getGoVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		return info.GoVersion
-	}
-
-	return "unknown"
-}
-
-// printVersion prints version information to stderr.
-func printVersion() {
-	short := commit
-	if len(short) >= 7 {
-		short = commit[:7]
-	}
-
-	fmt.Fprintf(os.Stderr, "%s v%s %s (%s)\n", name, version, short, date)
-	fmt.Fprintf(os.Stderr, "Copyright (C) %s %s\n", licenseYear, licenseOwner)
-	fmt.Fprintf(os.Stderr, "Licensed under the %s license\n", licenseType)
+type policyUpdate struct {
+	hash    string
+	domains []string
+	ips     []string
 }
 
 func main() {
@@ -80,61 +74,163 @@ func main() {
 		return
 	}
 
-	config := loadConfig()
+	err := run()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
 
-	// Create logger without logging startup info yet
-	lg := logging.NewWithContext(context.Background(), config.logLevel, os.Stdout, version)
+func run() error {
+	cfg := loadConfig()
+
+	lg := logging.NewWithContext(context.Background(), cfg.logLevel, os.Stdout, version)
 	slog.SetDefault(lg)
 
-	// Normalize mode before logging
-	config = normalizeMode(config, lg)
+	cfg = normalizeMode(cfg, lg)
 
-	// Now log startup info with corrected mode
-	logStartupInfo(lg, config)
+	logStartupInfo(lg, cfg)
 	logDashboardInfo(lg)
 	logNotificationInfo(lg)
 
-	// Validate port configuration before proceeding
-	err := validatePorts(config, lg)
+	err := validatePorts(cfg, lg)
 	if err != nil {
 		lg.Error("config.port_validation_failed", "err", err)
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+
+		return err
 	}
 
-	domains, _, err := loadAndApplyPolicy(config, lg)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	// Setup context with cancellation for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Setup signal handling for external shutdown (SIGTERM, SIGINT)
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	startServices(ctx, config, domains, lg)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	domains, initialHash, err := loadInitialPolicy(ctx, cfg, lg)
+	if err != nil {
+		return err
+	}
+
+	svcCancel := startServiceGroup(ctx, cfg, domains, lg)
+
+	defer func() {
+		if svcCancel != nil {
+			svcCancel()
+		}
+	}()
+
 	startNflogStream(ctx, lg)
 
-	// Log startup complete
-	lg.Info("startup.ready", "mode", config.mode, "filter_count", len(domains))
+	reloadCh := make(chan policyUpdate, 1)
 
-	// Wait for shutdown signal
-	sig := <-sigCh
-	lg.Info("shutdown.signal", "signal", sig.String())
-	cancel() // Cancel context to gracefully stop all services
+	lg.Info("policy.watcher_started", "path", cfg.policyPath, "interval", policyPollInterval.String())
 
-	// Give services time to cleanup
+	go pollPolicyChanges(ctx, cfg, lg, initialHash, policyPollInterval, reloadCh)
+
+	lg.Info("startup.ready", "mode", cfg.mode, "filter_count", len(domains))
+
+	supervise(ctx, cancel, sigCh, reloadCh, cfg, lg, &svcCancel)
+	shutdownGracefully(lg)
+
+	return nil
+}
+
+func supervise(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	sigCh <-chan os.Signal,
+	reloadCh <-chan policyUpdate,
+	cfg config,
+	lg *slog.Logger,
+	svcCancel *context.CancelFunc,
+) {
+	for {
+		select {
+		case sig := <-sigCh:
+			lg.Info("shutdown.signal", "signal", sig.String())
+			cancel()
+			stopServices(svcCancel)
+
+			return
+
+		case upd := <-reloadCh:
+			if ctx.Err() != nil {
+				stopServices(svcCancel)
+
+				return
+			}
+
+			lg.Info("policy.reloaded",
+				"hash", upd.hash,
+				"domain_count", len(upd.domains),
+				"ip_count", len(upd.ips),
+			)
+
+			restartServices(ctx, cfg, upd.domains, lg, svcCancel)
+			lg.Info("policy.applied", "mode", cfg.mode, "filter_count", len(upd.domains))
+
+		case <-ctx.Done():
+			stopServices(svcCancel)
+
+			return
+		}
+	}
+}
+
+func startServiceGroup(ctx context.Context, cfg config, domains []string, lg *slog.Logger) context.CancelFunc {
+	svcCtx, cancel := context.WithCancel(ctx)
+	startServices(svcCtx, cfg, domains, lg)
+
+	return cancel
+}
+
+func stopServices(svcCancel *context.CancelFunc) {
+	if svcCancel == nil {
+		return
+	}
+
+	if *svcCancel == nil {
+		return
+	}
+
+	(*svcCancel)()
+}
+
+func restartServices(
+	ctx context.Context,
+	cfg config,
+	domains []string,
+	lg *slog.Logger,
+	svcCancel *context.CancelFunc) {
+	stopServices(svcCancel)
+	*svcCancel = startServiceGroup(ctx, cfg, domains, lg)
+}
+
+func shutdownGracefully(lg *slog.Logger) {
 	const shutdownGracePeriod = 3 * time.Second
 	lg.Info("shutdown.graceful", "grace_period", shutdownGracePeriod.String())
 	time.Sleep(shutdownGracePeriod)
 
-	// Shutdown logger to flush buffers
-	logging.Shutdown(1 * time.Second)
 	lg.Info("shutdown.complete")
+	logging.Shutdown(1 * time.Second)
+}
+
+func loadInitialPolicy(ctx context.Context, cfg config, lg *slog.Logger) ([]string, string, error) {
+	domains, _, err := loadAndApplyPolicy(ctx, cfg, lg)
+	if err != nil {
+		return nil, "", err
+	}
+
+	hash, err := fileSHA256Hex(cfg.policyPath)
+	if err != nil {
+		lg.Warn("policy.hash_read_failed", "path", cfg.policyPath, "err", err)
+
+		return domains, "", nil
+	}
+
+	return domains, hash, nil
 }
 
 func handleVersionFlag() bool {
@@ -176,15 +272,34 @@ func loadConfig() config {
 	}
 }
 
+// getGoVersion returns the Go version used to build the binary.
+func getGoVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		return info.GoVersion
+	}
+
+	return "unknown"
+}
+
+// printVersion prints version information to stderr.
+func printVersion() {
+	short := commit
+	if len(short) >= 7 {
+		short = commit[:7]
+	}
+
+	fmt.Fprintf(os.Stderr, "%s v%s %s (%s)\n", name, version, short, date)
+	fmt.Fprintf(os.Stderr, "Copyright (C) %s %s\n", licenseYear, licenseOwner)
+	fmt.Fprintf(os.Stderr, "Licensed under the %s license\n", licenseType)
+}
+
 // logStartupInfo logs application startup information and configuration.
 func logStartupInfo(lg *slog.Logger, cfg config) {
-	// Shorten commit hash for cleaner output
 	shortCommit := commit
 	if len(shortCommit) > 7 {
 		shortCommit = commit[:7]
 	}
 
-	// Get nftables version
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -217,7 +332,6 @@ func logStartupInfo(lg *slog.Logger, cfg config) {
 
 	lg.Info("startup.info", kv...)
 
-	// Debug-level port info (detailed bind info logged later at INFO level)
 	if cfg.mode == filter.ModeHTTPS {
 		lg.Debug("startup.ports", "http_port", cfg.httpPort, "https_port", cfg.httpsPort)
 	}
@@ -226,6 +340,7 @@ func logStartupInfo(lg *slog.Logger, cfg config) {
 		lg.Debug("startup.ports", "dns_port", cfg.dnsPort)
 	}
 }
+
 func logDashboardInfo(lg *slog.Logger) {
 	dhost := strings.TrimSpace(getenvDefault("DASHBOARD_HOST", ""))
 	if dhost != "" {
@@ -253,7 +368,6 @@ func logNotificationInfo(lg *slog.Logger) {
 }
 
 // normalizeMode validates and normalizes the filter mode configuration.
-// If an invalid mode is provided, it logs a warning and defaults to HTTPS mode.
 func normalizeMode(cfg config, lg *slog.Logger) config {
 	mode := strings.ToLower(strings.TrimSpace(cfg.mode))
 	validModes := map[string]bool{
@@ -273,7 +387,6 @@ func normalizeMode(cfg config, lg *slog.Logger) config {
 
 // validatePorts checks for port conflicts in the configuration.
 func validatePorts(cfg config, lg *slog.Logger) error {
-	// In HTTPS mode, check HTTP vs HTTPS port conflict
 	if cfg.mode == filter.ModeHTTPS {
 		if cfg.httpPort == cfg.httpsPort {
 			return fmt.Errorf("%w: HTTP_PORT and HTTPS_PORT cannot be the same (%s)",
@@ -281,20 +394,21 @@ func validatePorts(cfg config, lg *slog.Logger) error {
 		}
 	}
 
-	// In DNS mode, check DNS port against HTTP/HTTPS ports (though they won't run together)
 	if cfg.mode == filter.ModeDNS {
 		if cfg.dnsPort == cfg.httpPort {
 			lg.Warn("config.port_overlap",
 				"DNS_PORT", cfg.dnsPort,
 				"HTTP_PORT", cfg.httpPort,
-				"note", "DNS mode active, HTTP port not used")
+				"note", "DNS mode active, HTTP port not used",
+			)
 		}
 
 		if cfg.dnsPort == cfg.httpsPort {
 			lg.Warn("config.port_overlap",
 				"DNS_PORT", cfg.dnsPort,
 				"HTTPS_PORT", cfg.httpsPort,
-				"note", "DNS mode active, HTTPS port not used")
+				"note", "DNS mode active, HTTPS port not used",
+			)
 		}
 	}
 
@@ -302,7 +416,7 @@ func validatePorts(cfg config, lg *slog.Logger) error {
 }
 
 // loadAndApplyPolicy loads the policy file and applies nftables rules.
-func loadAndApplyPolicy(cfg config, lg *slog.Logger) ([]string, []string, error) {
+func loadAndApplyPolicy(ctx context.Context, cfg config, lg *slog.Logger) ([]string, []string, error) {
 	ips, domains, err := policy.ReadPolicy(cfg.policyPath)
 	if err != nil {
 		lg.Error("policy.read_error", "path", cfg.policyPath, "err", err)
@@ -313,7 +427,7 @@ func loadAndApplyPolicy(cfg config, lg *slog.Logger) ([]string, []string, error)
 	lg.Info("policy.loaded", "domain_count", len(domains), "ip_count", len(ips))
 	lg.Debug("policy.loaded.details", "domains", domains, "ips", ips)
 
-	err = nftables.ApplyNftRules(ips, cfg.httpsPort, cfg.httpPort, cfg.dnsPort)
+	err = nftables.ApplyNftRulesWithContext(ctx, ips, cfg.httpsPort, cfg.httpPort, cfg.dnsPort)
 	if err != nil {
 		lg.Error("nftables.apply_failed", "err", err)
 
@@ -326,29 +440,34 @@ func loadAndApplyPolicy(cfg config, lg *slog.Logger) ([]string, []string, error)
 }
 
 // runServiceWithRetry runs a service in a goroutine and restarts it on failure.
-// Stops retrying when context is cancelled (e.g., on shutdown signal).
 func runServiceWithRetry(ctx context.Context, serviceName string, lg *slog.Logger, serviceFunc func() error) {
 	go func() {
 		for {
+			if ctx.Err() != nil {
+				lg.Info(serviceName+".shutdown", "reason", "context cancelled")
+
+				return
+			}
+
+			err := serviceFunc()
+			if err == nil {
+				continue
+			}
+
+			if ctx.Err() != nil {
+				lg.Info(serviceName+".shutdown", "reason", "context cancelled")
+
+				return
+			}
+
+			lg.Error(serviceName+".stopped", "err", err, "action", "retrying")
+
 			select {
 			case <-ctx.Done():
 				lg.Info(serviceName+".shutdown", "reason", "context cancelled")
 
 				return
-			default:
-				err := serviceFunc()
-				if err != nil {
-					// Check if we're shutting down
-					select {
-					case <-ctx.Done():
-						lg.Info(serviceName+".shutdown", "reason", "context cancelled")
-
-						return
-					default:
-						lg.Error(serviceName+".stopped", "err", err, "action", "retrying")
-						time.Sleep(retryDelay)
-					}
-				}
+			case <-time.After(retryDelay):
 			}
 		}
 	}()
@@ -369,17 +488,16 @@ func startServices(
 	}
 
 	switch cfg.mode {
-	case "dns":
+	case filter.ModeDNS:
 		startDNSService(ctx, cfg.dnsPort, domains, opts, lg)
-	case "https":
+	case filter.ModeHTTPS:
 		startHTTPSServices(ctx, cfg, domains, opts, lg)
 	default:
-		lg.Warn("filter_mode.invalid", "mode", cfg.mode, "defaulting_to", "https")
+		lg.Warn("filter_mode.invalid", "mode", cfg.mode, "defaulting_to", filter.ModeHTTPS)
 		startHTTPSServices(ctx, cfg, domains, opts, lg)
 	}
 }
 
-// startDNSService starts the DNS filtering service.
 func startDNSService(
 	ctx context.Context,
 	dnsPort string,
@@ -397,7 +515,6 @@ func startDNSService(
 	})
 }
 
-// startHTTPSServices starts HTTPS and HTTP filtering services.
 func startHTTPSServices(
 	ctx context.Context,
 	cfg config,
@@ -424,7 +541,6 @@ func startHTTPSServices(
 	})
 }
 
-// startNflogStream starts the nflog event stream listener.
 func startNflogStream(ctx context.Context, lg *slog.Logger) {
 	lg.Info("nflog.listen")
 
@@ -434,6 +550,123 @@ func startNflogStream(ctx context.Context, lg *slog.Logger) {
 			lg.Warn("nflog.stream_error", "err", err)
 		}
 	}()
+}
+
+// pollPolicyChanges polls the policy file hash and reloads on change.
+func pollPolicyChanges(
+	ctx context.Context,
+	cfg config,
+	lg *slog.Logger,
+	initialHash string,
+	interval time.Duration,
+	reloadCh chan policyUpdate,
+) {
+	lastHash := initialHash
+
+	t := time.NewTicker(interval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-t.C:
+			newHash, err := fileSHA256Hex(cfg.policyPath)
+			if err != nil {
+				lg.Warn("policy.hash_read_failed", "path", cfg.policyPath, "err", err)
+
+				continue
+			}
+
+			if lastHash == "" {
+				lastHash = newHash
+
+				continue
+			}
+
+			if newHash == lastHash {
+				continue
+			}
+
+			lg.Info("policy.change_detected", "old_hash", lastHash, "new_hash", newHash)
+
+			domains, ips, err := loadAndApplyPolicy(ctx, cfg, lg)
+			if err != nil {
+				lg.Error("policy.reload_failed", "err", err)
+
+				continue
+			}
+
+			lastHash = newHash
+
+			upd := policyUpdate{
+				hash:    newHash,
+				domains: append([]string(nil), domains...),
+				ips:     append([]string(nil), ips...),
+			}
+
+			sendLatest(ctx, reloadCh, upd)
+		}
+	}
+}
+
+func sendLatest(ctx context.Context, reloadCh chan policyUpdate, upd policyUpdate) {
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	select {
+	case reloadCh <- upd:
+		return
+	default:
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	case <-reloadCh:
+	default:
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	case reloadCh <- upd:
+	}
+}
+
+func fileSHA256Hex(path string) (string, error) {
+	cleanPath := filepath.Clean(strings.TrimSpace(path))
+	if cleanPath == "" {
+		return "", errPolicyPathEmpty
+	}
+
+	f, err := os.Open(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("open %q: %w", cleanPath, err)
+	}
+
+	h := sha256.New()
+
+	_, copyErr := io.Copy(h, f)
+	closeErr := f.Close()
+
+	if copyErr != nil {
+		if closeErr != nil {
+			return "", fmt.Errorf("read %q: %w (close error: %w)", cleanPath, copyErr, closeErr)
+		}
+
+		return "", fmt.Errorf("read %q: %w", cleanPath, copyErr)
+	}
+
+	if closeErr != nil {
+		return "", fmt.Errorf("close %q: %w", cleanPath, closeErr)
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // getenvDefault gets an environment variable with a default value if empty.
