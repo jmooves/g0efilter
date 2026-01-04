@@ -49,6 +49,10 @@ dockers_v2:
     platforms:
       - linux/amd64
       - linux/arm64
+    sbom: "true"
+    flags:
+      - "--sbom=true"
+      - "--provenance=mode=max"
     labels:
       org.opencontainers.image.source: "https://github.com/g0lab/g0efilter"
       org.opencontainers.image.title: "g0efilter"
@@ -66,6 +70,10 @@ dockers_v2:
     platforms:
       - linux/amd64
       - linux/arm64
+    sbom: "true"
+    flags:
+      - "--sbom=true"
+      - "--provenance=mode=max"
     labels:
       org.opencontainers.image.source: "https://github.com/g0lab/g0efilter"
       org.opencontainers.image.title: "g0efilter-dashboard"
