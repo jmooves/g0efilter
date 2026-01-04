@@ -62,9 +62,8 @@ allowlist:
 ```
 
 > [!NOTE]
-> **Policy configuration options:**
-> - The policy file supports **live reloading** edits to `policy.yaml` automatically trigger rule and service updates without a container restart.
-> - If you do not need the live reloading, you can also use environment variables (`ALLOWLIST_IPS`, `ALLOWLIST_DOMAINS`) instead of a policy file. Environment variables take precedence if both are present.
+> - The policy file supports live reloading: edits to policy.yaml automatically trigger rule and service updates without needing to restart the container.
+> - If you do not need live reloading, you can use environment variables (ALLOWLIST_IPS, ALLOWLIST_DOMAINS) instead of a policy file. If both are present, environment variables take precedence.
 
 ### Environment variables
 
