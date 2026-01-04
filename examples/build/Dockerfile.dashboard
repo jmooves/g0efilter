@@ -1,29 +1,31 @@
-# Stage 1: build
-FROM golang:1.25.5-alpine AS build
+# Stage 1: Build
+FROM golang:1.25.5-alpine AS builder
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG DATE=unknown
 
 WORKDIR /build
 
 COPY go.mod go.sum ./
-
 RUN go mod download
 
 COPY . .
 
 ENV CGO_ENABLED=0 GOOS=linux
+RUN go build -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+    -o /build/g0efilter-dashboard ./cmd/g0efilter-dashboard
 
-RUN go build -trimpath -ldflags "-s -w" \
-  -o /build/server ./cmd/g0efilter-dashboard/main.go
-
-
-# Stage 2: runtime
+# Stage 2: Runtime
 FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /app
 
-COPY --from=build /build/server /app/server
+COPY --from=builder /build/g0efilter-dashboard /app/g0efilter-dashboard
 
 EXPOSE 8081
 
-USER nonroot:nonroot
+USER nonroot
 
-ENTRYPOINT ["/app/server"]
+ENTRYPOINT ["/app/g0efilter-dashboard"]
