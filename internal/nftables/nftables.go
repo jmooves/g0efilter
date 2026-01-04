@@ -152,8 +152,8 @@ func ApplyNftRulesWithContext(
 		return err
 	}
 
-	_ = deleteTableIfExists(ctx, "ip", "filter_v4")
-	_ = deleteTableIfExists(ctx, "ip", "nat_v4")
+	_ = deleteTableIfExists(ctx, "ip", "g0efilter_filter_v4")
+	_ = deleteTableIfExists(ctx, "ip", "g0efilter_nat_v4")
 
 	return applyRuleset(ctx, ruleset)
 }
@@ -166,7 +166,7 @@ func ApplyNftRules(allowlist []string, httpsPortStr, httpPortStr, dnsPortStr str
 // generateDNSFilterRules creates nftables filter rules for DNS mode that block non-allowlisted traffic.
 func generateDNSFilterRules(allowSet string, dnsPort int) string {
 	return fmt.Sprintf(`
-table ip filter_v4 {
+table ip g0efilter_filter_v4 {
     set allow_daddr_v4 {
         type ipv4_addr
         flags interval
@@ -203,7 +203,7 @@ table ip filter_v4 {
 // generateHTTPSFilterRules creates nftables filter rules for HTTPS mode with logging and allowlist enforcement.
 func generateHTTPSFilterRules(allowSet string, httpPort, httpsPort int) string {
 	return fmt.Sprintf(`
-table ip filter_v4 {
+table ip g0efilter_filter_v4 {
     set allow_daddr_v4 {
         type ipv4_addr
         flags interval
@@ -244,7 +244,7 @@ table ip filter_v4 {
 // generateDNSNATRules creates nftables NAT rules that redirect all DNS traffic to the local DNS proxy.
 func generateDNSNATRules(allowSet string, dnsPort int) string {
 	return fmt.Sprintf(`
-table ip nat_v4 {
+table ip g0efilter_nat_v4 {
     set allow_daddr_v4 {
         type ipv4_addr
         flags interval
@@ -276,7 +276,7 @@ table ip nat_v4 {
 // generateHTTPSNATRules creates nftables NAT rules that redirect HTTP/HTTPS to local proxies for non-allowlisted IPs.
 func generateHTTPSNATRules(allowSet string, httpPort, httpsPort int) string {
 	return fmt.Sprintf(`
-table ip nat_v4 {
+table ip g0efilter_nat_v4 {
     set allow_daddr_v4 {
         type ipv4_addr
         flags interval
