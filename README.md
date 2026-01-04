@@ -62,9 +62,9 @@ allowlist:
 ```
 
 > [!NOTE]
-> You can also specify the allowlist using environment variables instead of a policy file.  
-> Set `ALLOWLIST_IPS` and/or `ALLOWLIST_DOMAINS` as comma-separated lists.  
-> Environment variables take precedence over the policy file if both are present.
+> **Policy configuration options:**
+> - The policy file supports **live reloading** edits to `policy.yaml` automatically trigger rule and service updates without a container restart.
+> - If you do not need the live reloading, you can also use environment variables (`ALLOWLIST_IPS`, `ALLOWLIST_DOMAINS`) instead of a policy file. Environment variables take precedence if both are present.
 
 ### Environment variables
 
