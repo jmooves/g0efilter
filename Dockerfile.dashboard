@@ -8,6 +8,6 @@ COPY ${TARGETPLATFORM}/g0efilter-dashboard /app/g0efilter-dashboard
 
 EXPOSE 8081
 
-USER nonroot:nonroot
+USER nonroot
 
 ENTRYPOINT ["/app/g0efilter-dashboard"]
