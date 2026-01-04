@@ -293,7 +293,7 @@ func getHTTPSModeTests() []struct {
 			dnsPort:   53,
 			mode:      "https",
 			expectedContains: []string{
-				"table ip g0efilter_filter_v4",
+				"table ip g0efilter_v4",
 				"table ip g0efilter_nat_v4",
 				"allow_daddr_v4",
 				"tcp dport 80",
@@ -331,7 +331,7 @@ func getDNSModeTests() []struct {
 			dnsPort:   5353,
 			mode:      "dns",
 			expectedContains: []string{
-				"table ip g0efilter_filter_v4",
+				"table ip g0efilter_v4",
 				"table ip g0efilter_nat_v4",
 				"allow_daddr_v4",
 				"udp dport 53",
@@ -368,7 +368,7 @@ func getDefaultModeTests() []struct {
 			dnsPort:   53,
 			mode:      "invalid",
 			expectedContains: []string{
-				"table ip g0efilter_filter_v4",
+				"table ip g0efilter_v4",
 				"table ip g0efilter_nat_v4",
 				"tcp dport 80",
 				"tcp dport 443",
