@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -37,8 +39,11 @@ const (
 )
 
 var (
-	errPortConflict    = errors.New("port conflict detected")
-	errPolicyPathEmpty = errors.New("policy path is empty")
+	errPortConflict         = errors.New("port conflict detected")
+	errPolicyPathEmpty      = errors.New("policy path is empty")
+	errUnknownUnblockType   = errors.New("unknown unblock type")
+	errAckFailed            = errors.New("unblock acknowledgment failed")
+	errUnexpectedHTTPStatus = errors.New("unexpected HTTP status")
 )
 
 type policyUpdate struct {
@@ -96,6 +101,8 @@ func Run(version, date, commit string) error {
 
 	go pollPolicyChanges(ctx, cfg, lg, initialHash, policyPollInterval, reloadCh)
 
+	startRemoteUnblockPolling(ctx, cfg, lg)
+
 	lg.Info("startup.ready", "mode", cfg.mode, "filter_count", len(domains))
 
 	supervise(ctx, cancel, sigCh, reloadCh, cfg, lg, &svcCancel)
@@ -120,27 +127,35 @@ func HandleVersionFlag(args []string, version, date, commit string) bool {
 
 // config holds application configuration from environment variables.
 type config struct {
-	policyPath string
-	httpPort   string
-	httpsPort  string
-	dnsPort    string
-	logLevel   string
-	logFile    string
-	hostname   string
-	mode       string
+	policyPath          string
+	httpPort            string
+	httpsPort           string
+	dnsPort             string
+	logLevel            string
+	logFile             string
+	hostname            string
+	mode                string
+	enableRemoteUnblock bool
+	dashboardHost       string
+	dashboardAPIKey     string
+	unblockPollInterval time.Duration
 }
 
 // loadConfig reads configuration from environment variables.
 func loadConfig() config {
 	return config{
-		policyPath: getenvDefault("POLICY_PATH", "/app/policy.yaml"),
-		httpPort:   getenvDefault("HTTP_PORT", "8080"),
-		httpsPort:  getenvDefault("HTTPS_PORT", "8443"),
-		dnsPort:    getenvDefault("DNS_PORT", "53"),
-		logLevel:   getenvDefault("LOG_LEVEL", "INFO"),
-		logFile:    getenvDefault("LOG_FILE", ""),
-		hostname:   getenvDefault("HOSTNAME", ""),
-		mode:       strings.ToLower(getenvDefault("FILTER_MODE", "https")),
+		policyPath:          getenvDefault("POLICY_PATH", "/app/policy.yaml"),
+		httpPort:            getenvDefault("HTTP_PORT", "8080"),
+		httpsPort:           getenvDefault("HTTPS_PORT", "8443"),
+		dnsPort:             getenvDefault("DNS_PORT", "53"),
+		logLevel:            getenvDefault("LOG_LEVEL", "INFO"),
+		logFile:             getenvDefault("LOG_FILE", ""),
+		hostname:            getenvDefault("HOSTNAME", ""),
+		mode:                strings.ToLower(getenvDefault("FILTER_MODE", "https")),
+		enableRemoteUnblock: strings.EqualFold(getenvDefault("ENABLE_REMOTE_UNBLOCK", "false"), "true"),
+		dashboardHost:       strings.TrimSpace(getenvDefault("DASHBOARD_HOST", "")),
+		dashboardAPIKey:     strings.TrimSpace(getenvDefault("DASHBOARD_API_KEY", "")),
+		unblockPollInterval: parseDurationDefault(getenvDefault("UNBLOCK_POLL_INTERVAL", "10s"), 10*time.Second),
 	}
 }
 
@@ -499,6 +514,27 @@ func startNflogStream(ctx context.Context, lg *slog.Logger) {
 	}()
 }
 
+func startRemoteUnblockPolling(ctx context.Context, cfg config, lg *slog.Logger) {
+	if !cfg.enableRemoteUnblock {
+		lg.Debug("remote_unblock.disabled", "reason", "ENABLE_REMOTE_UNBLOCK=false")
+
+		return
+	}
+
+	if cfg.dashboardHost == "" || cfg.dashboardAPIKey == "" {
+		lg.Warn("remote_unblock.disabled", "reason", "missing DASHBOARD_HOST or DASHBOARD_API_KEY")
+
+		return
+	}
+
+	lg.Info("remote_unblock.enabled",
+		"dashboard", cfg.dashboardHost,
+		"poll_interval", cfg.unblockPollInterval.String(),
+	)
+
+	go pollRemoteUnblocks(ctx, cfg, lg)
+}
+
 func pollPolicyChanges(
 	ctx context.Context,
 	cfg config,
@@ -622,4 +658,213 @@ func getenvDefault(key, def string) string {
 	}
 
 	return v
+}
+
+func parseDurationDefault(s string, def time.Duration) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return def
+	}
+
+	return d
+}
+
+// pollRemoteUnblocks polls the dashboard for pending unblock requests and applies them to the policy.
+//
+
+func pollRemoteUnblocks(
+	ctx context.Context,
+	cfg config,
+	lg *slog.Logger,
+) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	baseURL := cfg.dashboardHost
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		baseURL = "http://" + baseURL
+	}
+
+	t := time.NewTicker(cfg.unblockPollInterval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			processRemoteUnblocks(ctx, client, baseURL, cfg, lg)
+		}
+	}
+}
+
+// unblockResponse represents the API response from /api/v1/unblocks.
+type unblockResponse struct {
+	Pending []unblockRequest `json:"pending"`
+}
+
+// unblockRequest represents a single unblock request from the dashboard.
+type unblockRequest struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+func processRemoteUnblocks(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	cfg config,
+	lg *slog.Logger,
+) {
+	unblocks, err := fetchPendingUnblocks(ctx, client, baseURL, cfg)
+	if err != nil {
+		lg.Warn("remote_unblock.fetch_failed", "err", err)
+
+		return
+	}
+
+	if len(unblocks) == 0 {
+		return
+	}
+
+	lg.Debug("remote_unblock.pending", "count", len(unblocks))
+
+	// Process each unblock request
+	// The file watcher will detect the policy file change and trigger a reload
+	processUnblockBatch(ctx, client, baseURL, cfg, lg, unblocks)
+}
+
+func fetchPendingUnblocks(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	cfg config,
+) ([]unblockRequest, error) {
+	url := baseURL + "/api/v1/unblocks"
+	if cfg.hostname != "" {
+		url += "?hostname=" + cfg.hostname
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("X-Api-Key", cfg.dashboardAPIKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: %d", errUnexpectedHTTPStatus, resp.StatusCode)
+	}
+
+	var unblocks unblockResponse
+
+	err = json.NewDecoder(resp.Body).Decode(&unblocks)
+	if err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return unblocks.Pending, nil
+}
+
+func processUnblockBatch(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	cfg config,
+	lg *slog.Logger,
+	unblocks []unblockRequest,
+) bool {
+	applied := false
+
+	for _, ub := range unblocks {
+		err := applyUnblock(cfg.policyPath, ub, lg)
+		if err != nil {
+			lg.Error("remote_unblock.apply_failed",
+				"id", ub.ID,
+				"type", ub.Type,
+				"value", ub.Value,
+				"err", err,
+			)
+
+			continue
+		}
+
+		applied = true
+
+		// Acknowledge the unblock
+		err = acknowledgeUnblock(ctx, client, baseURL, cfg.dashboardAPIKey, ub.ID)
+		if err != nil {
+			lg.Warn("remote_unblock.ack_failed", "id", ub.ID, "err", err)
+		} else {
+			lg.Info("remote_unblock.applied",
+				"id", ub.ID,
+				"type", ub.Type,
+				"value", ub.Value,
+			)
+		}
+	}
+
+	return applied
+}
+
+func applyUnblock(policyPath string, ub unblockRequest, lg *slog.Logger) error {
+	switch ub.Type {
+	case "domain":
+		err := policy.AppendDomain(policyPath, ub.Value)
+		if err != nil {
+			return fmt.Errorf("append domain: %w", err)
+		}
+
+		return nil
+	case "ip":
+		err := policy.AppendIP(policyPath, ub.Value)
+		if err != nil {
+			return fmt.Errorf("append ip: %w", err)
+		}
+
+		return nil
+	default:
+		lg.Warn("remote_unblock.unknown_type", "type", ub.Type)
+
+		return fmt.Errorf("%w: %s", errUnknownUnblockType, ub.Type)
+	}
+}
+
+func acknowledgeUnblock(ctx context.Context, client *http.Client, baseURL, apiKey, id string) error {
+	body := fmt.Sprintf(`{"id":"%s"}`, id)
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		baseURL+"/api/v1/unblocks/ack",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		return fmt.Errorf("create ack request: %w", err)
+	}
+
+	req.Header.Set("X-Api-Key", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send ack request: %w", err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: status %d", errAckFailed, resp.StatusCode)
+	}
+
+	return nil
 }

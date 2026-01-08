@@ -7,42 +7,19 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestIndexHandler(t *testing.T) {
 	t.Parallel()
 
-	testCases := getIndexHandlerTestCases()
+	handler := IndexHandler()
+	// http.FileServer automatically serves index.html for directory requests
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+	handler.ServeHTTP(rr, req)
 
-			handler := IndexHandler(tc.timeout)
-			// http.FileServer automatically serves index.html for directory requests
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			rr := httptest.NewRecorder()
-
-			handler.ServeHTTP(rr, req)
-
-			validateIndexHandlerResponse(t, rr)
-		})
-	}
-}
-
-func getIndexHandlerTestCases() []struct {
-	name    string
-	timeout time.Duration
-} {
-	return []struct {
-		name    string
-		timeout time.Duration
-	}{
-		{"zero timeout", 0},
-		{"short timeout", 5 * time.Second},
-		{"long timeout", 30 * time.Second},
-	}
+	validateIndexHandlerResponse(t, rr)
 }
 
 func validateIndexHandlerResponse(t *testing.T, rr *httptest.ResponseRecorder) {
@@ -110,7 +87,7 @@ func validateContentType(t *testing.T, rr *httptest.ResponseRecorder) {
 func TestIndexHandlerWithDifferentMethods(t *testing.T) {
 	t.Parallel()
 
-	handler := IndexHandler(10 * time.Second)
+	handler := IndexHandler()
 
 	methods := []string{"GET", "HEAD"}
 

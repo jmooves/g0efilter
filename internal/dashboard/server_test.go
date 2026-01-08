@@ -17,6 +17,7 @@ import (
 const (
 	testActionBlocked = "BLOCKED"
 	testActionAllowed = "ALLOWED"
+	testExampleDomain = "example.com"
 )
 
 // TestMemStore tests the in-memory store operations.
@@ -476,7 +477,7 @@ func TestProcessPayload(t *testing.T) {
 		payload := map[string]any{
 			"msg":       "test",
 			"action":    "BLOCKED",
-			"http_host": "example.com",
+			"http_host": testExampleDomain,
 			"host":      "fallback.com",
 			"https":     "last.com",
 			"qname":     "dns.com",
@@ -488,11 +489,11 @@ func TestProcessPayload(t *testing.T) {
 		}
 
 		// http_host should be first priority
-		if entry.HTTPS != "example.com" {
+		if entry.HTTPS != testExampleDomain {
 			t.Errorf("HTTPS = %s, want example.com (http_host priority)", entry.HTTPS)
 		}
 
-		if entry.HTTPHost != "example.com" {
+		if entry.HTTPHost != testExampleDomain {
 			t.Errorf("HTTPHost = %s, want example.com", entry.HTTPHost)
 		}
 	})

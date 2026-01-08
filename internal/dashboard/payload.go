@@ -275,11 +275,12 @@ func hasSuspiciousPatterns(value string) bool {
 func SanitizePayloadFields(payload map[string]any) {
 	// List of fields that should contain domain names or hostnames
 	domainFields := []string{
-		"host",     // HTTP Host header
-		"https",    // HTTPS SNI
-		"qname",    // DNS query name
-		"hostname", // Generic hostname
-		"domain",   // Generic domain
+		"host",      // HTTP Host header
+		"http_host", // HTTP Host header (alternative key)
+		"https",     // HTTPS SNI
+		"qname",     // DNS query name
+		"hostname",  // Generic hostname
+		"domain",    // Generic domain
 	}
 
 	for _, field := range domainFields {

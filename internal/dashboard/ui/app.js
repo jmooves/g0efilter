@@ -2,6 +2,8 @@
 var LIVE = JSON.parse(localStorage.getItem('autoRefresh') || 'true');
 var VIEW = localStorage.getItem('view') || 'stream';
 var MAX_ROWS = 2000;
+var pendingUnblocks = new Set(); // Track domains/IPs with pending unblock requests
+var completedUnblocks = new Set(); // Track domains/IPs that have been unblocked
 
 /* elements */
 var autoRefreshEl = document.getElementById('autoRefresh');
@@ -106,6 +108,65 @@ function matches(it){
 
 /* --- stream --- */
 var allItems=[];
+
+/* --- unblock helpers --- */
+async function requestUnblock(type, value, targetHostname) {
+  try {
+    var apiKey = localStorage.getItem('apiKey') || '';
+    var headers = {'Content-Type': 'application/json'};
+    if (apiKey) headers['X-Api-Key'] = apiKey;
+    
+    var body = {type: type, value: value};
+    if (targetHostname) body.target_hostname = targetHostname;
+    
+    var res = await fetch('/api/v1/unblocks', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(body)
+    });
+    if (res.ok) {
+      var target = targetHostname || 'all hosts';
+      alert('Unblock request queued for: ' + value + ' (target: ' + target + ')');
+      // Track this value as pending and re-render to hide the button
+      pendingUnblocks.add(value.toLowerCase());
+      renderStream(true);
+    } else {
+      var err = await res.json();
+      alert('Failed to queue unblock: ' + (err.error || 'Unknown error'));
+    }
+  } catch (e) {
+    alert('Failed to queue unblock: ' + e.message);
+  }
+}
+
+function unblockDomain(domain, sourceHostname) {
+  var targetHost = prompt('Target hostname (leave empty for all hosts):', sourceHostname || '');
+  if (targetHost === null) return; // Cancelled
+  if (!confirm('Queue unblock request for domain: ' + domain + '?')) return;
+  requestUnblock('domain', domain, targetHost.trim());
+}
+
+function unblockIP(ip, sourceHostname) {
+  // Strip port if present
+  var cleanIP = ip.split(':')[0];
+  var targetHost = prompt('Target hostname (leave empty for all hosts):', sourceHostname || '');
+  if (targetHost === null) return; // Cancelled
+  if (!confirm('Queue unblock request for IP: ' + cleanIP + '?')) return;
+  requestUnblock('ip', cleanIP, targetHost.trim());
+}
+
+// Expose to global scope for onclick handlers
+window.unblockDomain = unblockDomain;
+window.unblockIP = unblockIP;
+
+// Escape a value for safe inclusion in a single-quoted JavaScript string literal.
+// This first applies `esc` (for HTML escaping) and then escapes backslashes
+// and single quotes so the resulting string can be embedded inside onclick="...".
+function jsStringEsc(value) {
+  var s = esc(value == null ? '' : value);
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function rowHTML(it){
   var act  = getAction(it);
   var comp = getComp(it) || (it.component||'');
@@ -117,6 +178,33 @@ function rowHTML(it){
   var ver  = versionOf(it);
   var when = it.time || it.ts || new Date().toISOString();
   var badge = 'badge-'+act;
+  
+  // Unblock button for blocked items - pass source hostname as default target
+  // Show status: Unblocked (green) > Pending (yellow) > Unblock button
+  var unblockBtn = '';
+  if (act === 'BLOCKED') {
+    var escapedHn = jsStringEsc(hn);
+    if (host) {
+      var hostLower = host.toLowerCase();
+      if (completedUnblocks.has(hostLower)) {
+        unblockBtn = '<span class="unblock-done">Unblocked</span>';
+      } else if (pendingUnblocks.has(hostLower)) {
+        unblockBtn = '<span class="unblock-pending">Pending</span>';
+      } else {
+        unblockBtn = '<button class="unblock-btn" onclick="unblockDomain(\''+jsStringEsc(host)+'\', \''+escapedHn+'\')">Unblock Domain</button>';
+      }
+    } else if (dst) {
+      var cleanDst = dst.split(':')[0].toLowerCase();
+      if (completedUnblocks.has(cleanDst)) {
+        unblockBtn = '<span class="unblock-done">Unblocked</span>';
+      } else if (pendingUnblocks.has(cleanDst)) {
+        unblockBtn = '<span class="unblock-pending">Pending</span>';
+      } else {
+        unblockBtn = '<button class="unblock-btn" onclick="unblockIP(\''+jsStringEsc(dst)+'\', \''+escapedHn+'\')">Unblock IP</button>';
+      }
+    }
+  }
+  
   return '<tr>' +
     '<td><span class="badge '+badge+'">'+esc(act)+'</span></td>' +
     '<td>'+esc(comp)+'</td>' +
@@ -127,6 +215,7 @@ function rowHTML(it){
     '<td class="mono">'+esc(fid)+'</td>' +
     '<td class="mono">'+esc(ver)+'</td>' +
     '<td><small>'+esc(new Date(when).toLocaleString())+' <span style="opacity:.6">('+esc(rel(when))+' ago)</span></small></td>' +
+    '<td>'+unblockBtn+'</td>' +
   '</tr>';
 }
 function renderStream(replace){
@@ -239,5 +328,54 @@ function connectSSE(){
 }
 function disconnectSSE(){ if(es){ es.close(); es=null; } }
 
+/* --- unblock status polling --- */
+async function loadUnblockStatus(){
+  try {
+    var res = await fetch('/api/v1/unblocks/status');
+    if (!res.ok) return;
+    var data = await res.json();
+    
+    var changed = false;
+    
+    // Update pending set
+    var newPending = new Set();
+    if (data.pending) {
+      for (var i = 0; i < data.pending.length; i++) {
+        newPending.add(data.pending[i].value.toLowerCase());
+      }
+    }
+    if (newPending.size !== pendingUnblocks.size) changed = true;
+    pendingUnblocks = newPending;
+    
+    // Update completed set
+    var newCompleted = new Set();
+    if (data.completed) {
+      for (var j = 0; j < data.completed.length; j++) {
+        newCompleted.add(data.completed[j].value.toLowerCase());
+      }
+    }
+    if (newCompleted.size !== completedUnblocks.size) changed = true;
+    completedUnblocks = newCompleted;
+    
+    // Re-render if status changed
+    if (changed) {
+      renderStream(true);
+    }
+  } catch {
+    // Ignore errors - status polling is best-effort
+  }
+}
+
+// Poll for unblock status every 5 seconds
+var unblockPollInterval = null;
+function startUnblockPolling() {
+  if (unblockPollInterval) return;
+  unblockPollInterval = setInterval(loadUnblockStatus, 5000);
+}
+
 /* init */
-reload().then(function(){ if(LIVE) connectSSE(); });
+reload().then(function(){
+  loadUnblockStatus(); // Load initial unblock status
+  startUnblockPolling(); // Start polling for status updates
+  if(LIVE) connectSSE();
+});

@@ -289,6 +289,167 @@ func (s *Server) clearLogsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// unblockStatusHandler handles GET /api/v1/unblocks/status requests.
+// Returns pending and completed unblocks for UI polling (no API key required).
+func (s *Server) unblockStatusHandler(w http.ResponseWriter, _ *http.Request) {
+	pending := s.unblockStore.GetPending()
+	completed := s.unblockStore.GetCompleted()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	err := json.NewEncoder(w).Encode(map[string]any{
+		"pending":   pending,
+		"completed": completed,
+	})
+	if err != nil {
+		s.logger.Error("failed to encode unblock status response", "error", err)
+	}
+}
+
+// listUnblocksHandler handles GET /api/v1/unblocks requests.
+// Supports ?hostname= query parameter to filter for a specific host.
+func (s *Server) listUnblocksHandler(w http.ResponseWriter, r *http.Request) {
+	hostname := strings.TrimSpace(r.URL.Query().Get("hostname"))
+
+	s.logger.Debug("unblocks.list",
+		"remote", r.RemoteAddr,
+		"hostname", hostname,
+	)
+
+	var pending []UnblockRequest
+	if hostname != "" {
+		pending = s.unblockStore.GetPendingForHost(hostname)
+	} else {
+		pending = s.unblockStore.GetPending()
+	}
+
+	completed := s.unblockStore.GetCompleted()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	err := json.NewEncoder(w).Encode(map[string]any{
+		"pending":   pending,
+		"completed": completed,
+	})
+	if err != nil {
+		s.logger.Error("failed to encode unblocks response", "error", err)
+	}
+}
+
+// createUnblockHandler handles POST /api/v1/unblocks requests.
+func (s *Server) createUnblockHandler(w http.ResponseWriter, r *http.Request) {
+	//nolint:tagliatelle // JSON uses snake_case for API compatibility
+	var req struct {
+		Type           string `json:"type"`            // "domain" or "ip"
+		Value          string `json:"value"`           // the domain or IP to unblock
+		TargetHostname string `json:"target_hostname"` // optional: specific host, empty = all
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		s.logger.Debug("unblocks.create.invalid_json",
+			"remote", r.RemoteAddr,
+			"error", err.Error(),
+		)
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+
+		return
+	}
+
+	// Validate type
+	if req.Type != "domain" && req.Type != "ip" {
+		s.logger.Debug("unblocks.create.invalid_type",
+			"remote", r.RemoteAddr,
+			"type", req.Type,
+		)
+		http.Error(w, `{"error":"type must be 'domain' or 'ip'"}`, http.StatusBadRequest)
+
+		return
+	}
+
+	// Validate value
+	if strings.TrimSpace(req.Value) == "" {
+		s.logger.Debug("unblocks.create.empty_value",
+			"remote", r.RemoteAddr,
+		)
+		http.Error(w, `{"error":"value cannot be empty"}`, http.StatusBadRequest)
+
+		return
+	}
+
+	targetHost := strings.TrimSpace(req.TargetHostname)
+	id := s.unblockStore.Add(req.Type, strings.TrimSpace(req.Value), targetHost)
+
+	s.logger.Info("unblocks.created",
+		"remote", r.RemoteAddr,
+		"type", req.Type,
+		"value", req.Value,
+		"target_hostname", targetHost,
+		"id", id,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+
+	err = json.NewEncoder(w).Encode(map[string]string{
+		"id":     id,
+		"status": "pending",
+	})
+	if err != nil {
+		s.logger.Error("failed to encode unblock response", "error", err)
+	}
+}
+
+// ackUnblockHandler handles POST /api/v1/unblocks/ack requests.
+func (s *Server) ackUnblockHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		s.logger.Debug("unblocks.ack.invalid_json",
+			"remote", r.RemoteAddr,
+			"error", err.Error(),
+		)
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+
+		return
+	}
+
+	if strings.TrimSpace(req.ID) == "" {
+		s.logger.Debug("unblocks.ack.empty_id",
+			"remote", r.RemoteAddr,
+		)
+		http.Error(w, `{"error":"id cannot be empty"}`, http.StatusBadRequest)
+
+		return
+	}
+
+	ok := s.unblockStore.Acknowledge(strings.TrimSpace(req.ID))
+	if !ok {
+		s.logger.Debug("unblocks.ack.not_found",
+			"remote", r.RemoteAddr,
+			"id", req.ID,
+		)
+		http.Error(w, `{"error":"unblock request not found"}`, http.StatusNotFound)
+
+		return
+	}
+
+	s.logger.Info("unblocks.acknowledged",
+		"remote", r.RemoteAddr,
+		"id", req.ID,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+
+	err = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err != nil {
+		s.logger.Error("failed to encode ack response", "error", err)
+	}
+}
+
 // SanitizeSearchQuery validates and sanitizes the search query parameter.
 // Returns sanitized query or empty string if validation fails.
 func SanitizeSearchQuery(q string) string {
