@@ -10,39 +10,37 @@
 
 g0efilter is a lightweight container designed to filter outbound (egress) traffic from attached container workloads. Run g0efilter alongside your workloads and attach them to its network namespace to enforce a simple IP and domain allowlist policy.
 
+### Features
+
+- **Egress filtering** - Block unauthorized outbound traffic using a IP/CIDR and domain allowlist
+- **Two filtering modes** - HTTPS (TLS SNI/HTTP Host inspection) or DNS-based filtering
+- **Live policy reloading** - Update policy.yaml without restarting containers
+- **Real-time dashboard** - Web UI with SSE streaming for traffic monitoring
+- **Remote unblock** - Unblock domains/IPs from the dashboard UI (with auth middleware)
+- **Notifications** - Gotify alerts for blocked traffic events
+
 ### Quick Start
 
 Refer to the [examples](https://github.com/g0lab/g0efilter/tree/main/examples).
 
 ### How it works
 
-* Attach containers to g0efilter using `network_mode: "service:g0efilter"` in Docker Compose.
-* A policy file defines the allowed IPs/CIDRs and domains.
-* Using nftables, g0efilter (when in HTTPS filter mode) allows traffic to specified IPs/CIDRs or redirects outbound HTTP (port 80) and HTTPS (port 443) to local services.
-* These local services check the HTTP Host header or TLS SNI extension in the ClientHello and allow or block connections according to the policy.  
-* Filtering behaviour depends on the selected mode: https (default) or dns.  
-* The optional g0efilter-dashboard displays real-time traffic and enforcement actions.
+* Attach containers to g0efilter using `network_mode: "service:g0efilter"` in Docker Compose
+* A policy file defines allowed IPs/CIDRs and domains - IPs bypass filtering entirely
+* Filtering mode is set via `FILTER_MODE` environment variable (`https` or `dns`)
+* The optional g0efilter-dashboard displays real-time traffic and enforcement actions
+
+**HTTPS mode (default):** Redirects outbound HTTP/HTTPS traffic to local services that check the HTTP Host header or TLS SNI against the policy. Non-matching traffic is blocked.
+
+**DNS mode:** Redirects DNS queries to an internal server that only resolves allowlisted domains. Non-matching domains receive NXDOMAIN. Direct IP connections bypass DNS filtering.
 
 > [!NOTE]
 > Attached containers share g0efilter's network namespace and must not bind to ports used by g0efilter.  
-> By default, g0efilter uses `HTTP_PORT` (8080), `HTTPS_PORT` (8443), and optionally `DNS_PORT` (53).  
-> Either avoid these ports in attached containers or change them via environment variables.
-
-### HTTPS/Host Header filtering behaviour (default)
-
-* All IPs listed in the policy file bypass any redirection.
-* In HTTPS mode (default), traffic to ports 80 and 443 is redirected to local services that check the HTTP Host header or TLS SNI against the policy file, anything not matching is blocked.
-
-### DNS filtering behaviour
-
-* All IPs listed in the policy file bypass any redirection.
-* In DNS mode, traffic to port 53 is redirected to an internal DNS server that only resolves allowlisted domains.
-* Non-allowlisted domains receive NXDOMAIN responses (fail to resolve).
-* Direct IP connections bypass DNS filtering, so this mode offers less comprehensive protection than HTTPS mode.
+> By default, g0efilter uses `HTTP_PORT` (8080), `HTTPS_PORT` (8443), and optionally `DNS_PORT` (53).
 
 ### Dashboard container
 
-The optional **g0efilter-dashboard** container runs a small web UI on **port 8081** (by default). If `DASHBOARD_HOST` and `DASHBOARD_API_KEY` are set, the **g0efilter** container will ship logs to the dashboard.
+The optional **g0efilter-dashboard** container runs a web UI on **port 8081** (by default). If `DASHBOARD_HOST` and `DASHBOARD_API_KEY` are set, g0efilter will ship logs to the dashboard.
 
 Example Dashboard Screenshot:
 
@@ -120,41 +118,20 @@ The **remote unblock** feature allows administrators to unblock domains or IPs d
 
 I would recommend to place the **g0efilter-dashboard** behind a reverse proxy such as Traefik with the following controls:
 
-**Public Endpoints (no authentication required):**
-- `GET /health` - Health check endpoint for monitoring/load balancers
-
-**API Key Protected Endpoints:**
-- `POST /api/v1/logs` - Log ingestion from g0efilter containers (protected by `API_KEY` environment variable)
-
-**Endpoints to Protect with Middleware Auth:**
-- `GET /` - Dashboard web UI
-- `GET /api/v1/logs` - Read logs
-- `GET /api/v1/events` - Server-Sent Events stream
-- `DELETE /api/v1/logs` - Clear logs
-- `POST /api/v1/unblocks` - Create unblock request (from dashboard UI)
-- `GET /api/v1/unblocks/status` - Poll unblock status (from dashboard UI)
-
-### Unblock API Endpoints
+### API Endpoints
 
 | Endpoint | Auth | Description |
 |----------|------|-------------|
-| `POST /api/v1/unblocks` | Reverse proxy middleware | Create unblock request (from dashboard UI) |
-| `GET /api/v1/unblocks/status` | Reverse proxy middleware | Poll pending/completed status (from dashboard UI) |
-| `GET /api/v1/unblocks?hostname=X` | API Key | Poll pending requests for hostname (used by g0efilter) |
-| `POST /api/v1/unblocks/ack` | API Key | Acknowledge processed request (used by g0efilter) |
-
-**Example Configuration Pattern:**
-
-Configure your reverse proxy to:
-1. Allow `/health` publicly for health checks
-2. Bypass auth middleware for `POST /api/v1/logs` (allows g0efilter containers to authenticate with API key instead)
-3. Require auth middleware for all other routes (UI and read operations)
-
-This ensures:
-- g0efilter containers can ship logs using the API key
-- Dashboard UI access is protected by auth middleware (e.g., Authelia, Authentik, PocketID)
-- Monitoring systems can check health without authentication
-- Unauthorized users cannot view sensitive traffic logs
+| `GET /health` | None | Health check for monitoring/load balancers |
+| `POST /api/v1/logs` | API Key | Log ingestion from g0efilter containers |
+| `GET /api/v1/unblocks?hostname=X` | API Key | Poll pending unblock requests (used by g0efilter) |
+| `POST /api/v1/unblocks/ack` | API Key | Acknowledge processed unblock (used by g0efilter) |
+| `GET /` | Middleware | Dashboard web UI |
+| `GET /api/v1/logs` | Middleware | Read logs |
+| `GET /api/v1/events` | Middleware | Server-Sent Events stream |
+| `DELETE /api/v1/logs` | Middleware | Clear logs |
+| `POST /api/v1/unblocks` | Middleware | Create unblock request (from dashboard UI) |
+| `GET /api/v1/unblocks/status` | Middleware | Poll unblock status (from dashboard UI) |
 
 ### Example Traefik Configuration
 
