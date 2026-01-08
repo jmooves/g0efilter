@@ -159,6 +159,14 @@ function unblockIP(ip, sourceHostname) {
 window.unblockDomain = unblockDomain;
 window.unblockIP = unblockIP;
 
+// Escape a value for safe inclusion in a single-quoted JavaScript string literal.
+// This first applies `esc` (for HTML escaping) and then escapes backslashes
+// and single quotes so the resulting string can be embedded inside onclick="...".
+function jsStringEsc(value) {
+  var s = esc(value == null ? '' : value);
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function rowHTML(it){
   var act  = getAction(it);
   var comp = getComp(it) || (it.component||'');
@@ -175,7 +183,7 @@ function rowHTML(it){
   // Show status: Unblocked (green) > Pending (yellow) > Unblock button
   var unblockBtn = '';
   if (act === 'BLOCKED') {
-    var escapedHn = esc(hn).replace(/'/g, "\\'");
+    var escapedHn = jsStringEsc(hn);
     if (host) {
       var hostLower = host.toLowerCase();
       if (completedUnblocks.has(hostLower)) {
@@ -183,7 +191,7 @@ function rowHTML(it){
       } else if (pendingUnblocks.has(hostLower)) {
         unblockBtn = '<span class="unblock-pending">Pending</span>';
       } else {
-        unblockBtn = '<button class="unblock-btn" onclick="unblockDomain(\''+esc(host).replace(/'/g, "\\'")+'\', \''+escapedHn+'\')">Unblock Domain</button>';
+        unblockBtn = '<button class="unblock-btn" onclick="unblockDomain(\''+jsStringEsc(host)+'\', \''+escapedHn+'\')">Unblock Domain</button>';
       }
     } else if (dst) {
       var cleanDst = dst.split(':')[0].toLowerCase();
@@ -192,7 +200,7 @@ function rowHTML(it){
       } else if (pendingUnblocks.has(cleanDst)) {
         unblockBtn = '<span class="unblock-pending">Pending</span>';
       } else {
-        unblockBtn = '<button class="unblock-btn" onclick="unblockIP(\''+esc(dst).replace(/'/g, "\\'")+'\', \''+escapedHn+'\')">Unblock IP</button>';
+        unblockBtn = '<button class="unblock-btn" onclick="unblockIP(\''+jsStringEsc(dst)+'\', \''+escapedHn+'\')">Unblock IP</button>';
       }
     }
   }
