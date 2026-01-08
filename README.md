@@ -166,7 +166,7 @@ http:
     g0efilter-ingest-router:
       entryPoints:
         - websecure
-      rule: "Host(`g0efilter.example.com`) && ((PathPrefix(`/api/v1/logs`) && Method(`POST`)) || PathPrefix(`/health`) || (Path(`/api/v1/unblocks`) && Method(`GET`) && Query(`hostname`)) || (Path(`/api/v1/unblocks/ack`) && Method(`POST`)))"
+      rule: "Host(`g0efilter.example.com`) && ((PathPrefix(`/api/v1/logs`) && Method(`POST`)) || PathPrefix(`/health`) || (Path(`/api/v1/unblocks`) && Method(`GET`) && QueryRegexp(`hostname`, `^.+$`)) || (Path(`/api/v1/unblocks/ack`) && Method(`POST`)))"
       service: g0efilter-dash-service
       middlewares:
         - security-headers
