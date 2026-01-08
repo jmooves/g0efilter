@@ -250,7 +250,11 @@ func getGenerateNftRulesetTests() []struct {
 	mode             string
 	expectedContains []string
 } {
-	tests := []struct {
+	https := getHTTPSModeTests()
+	dns := getDNSModeTests()
+	defaults := getDefaultModeTests()
+
+	tests := make([]struct {
 		name             string
 		allowlist        []string
 		httpsPort        int
@@ -258,11 +262,11 @@ func getGenerateNftRulesetTests() []struct {
 		dnsPort          int
 		mode             string
 		expectedContains []string
-	}{}
+	}, 0, len(https)+len(dns)+len(defaults))
 
-	tests = append(tests, getHTTPSModeTests()...)
-	tests = append(tests, getDNSModeTests()...)
-	tests = append(tests, getDefaultModeTests()...)
+	tests = append(tests, https...)
+	tests = append(tests, dns...)
+	tests = append(tests, defaults...)
 
 	return tests
 }
