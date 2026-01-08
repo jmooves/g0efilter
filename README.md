@@ -92,6 +92,8 @@ allowlist:
 | `NOTIFICATION_KEY`             | Gotify application key for authentication          | unset               |
 | `NOTIFICATION_BACKOFF_SECONDS` | Rate limit backoff period for duplicate alerts (in seconds) | `60`                |
 | `NOTIFICATION_IGNORE_DOMAINS`  | Comma-separated list of domains to ignore for notifications (supports wildcards like `*.example.com`) | unset               |
+| `ENABLE_REMOTE_UNBLOCK` | Enable polling dashboard for remote unblock requests | `false` |
+| `UNBLOCK_POLL_INTERVAL` | How often to poll dashboard for unblock requests (supports duration formats like `10s`, `1m`) | `10s` |
 
 ### g0efilter-dashboard
 
@@ -106,6 +108,13 @@ allowlist:
 | `WRITE_TIMEOUT` | HTTP write timeout in seconds (0 = no timeout, recommended for SSE)                                               | `0`     |
 | `RATE_RPS`      | Maximum average requests per second (rate-limit)                                                                  | `50`    |
 | `RATE_BURST`    | Maximum burst size for rate-limiting (in requests)                                                                | `100`   |
+
+## Remote Unblock Feature
+
+The **remote unblock** feature allows administrators to unblock domains or IPs directly from the dashboard UI. When enabled, g0efilter instances poll the dashboard for pending unblock requests and automatically update their policy files.
+
+> [!WARNING]
+> This feature is **disabled by default** (`ENABLE_REMOTE_UNBLOCK=false`). Do not enable this in non-test environments without proper authentication middleware protecting the dashboard. The `POST /api/v1/unblocks` endpoint must be protected by reverse proxy authentication (e.g., Authelia, Authentik, PocketID) to prevent unauthorized users from modifying your allowlist.
 
 ## Dashboard Reverse Proxy Suggestion
 
@@ -122,6 +131,17 @@ I would recommend to place the **g0efilter-dashboard** behind a reverse proxy su
 - `GET /api/v1/logs` - Read logs
 - `GET /api/v1/events` - Server-Sent Events stream
 - `DELETE /api/v1/logs` - Clear logs
+- `POST /api/v1/unblocks` - Create unblock request (from dashboard UI)
+- `GET /api/v1/unblocks/status` - Poll unblock status (from dashboard UI)
+
+### Unblock API Endpoints
+
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `POST /api/v1/unblocks` | Reverse proxy middleware | Create unblock request (from dashboard UI) |
+| `GET /api/v1/unblocks/status` | Reverse proxy middleware | Poll pending/completed status (from dashboard UI) |
+| `GET /api/v1/unblocks?hostname=X` | API Key | Poll pending requests for hostname (used by g0efilter) |
+| `POST /api/v1/unblocks/ack` | API Key | Acknowledge processed request (used by g0efilter) |
 
 **Example Configuration Pattern:**
 
@@ -146,7 +166,7 @@ http:
     g0efilter-ingest-router:
       entryPoints:
         - websecure
-      rule: "Host(`g0efilter.example.com`) && ((PathPrefix(`/api/v1/logs`) && Method(`POST`)) || PathPrefix(`/health`))"
+      rule: "Host(`g0efilter.example.com`) && ((PathPrefix(`/api/v1/logs`) && Method(`POST`)) || PathPrefix(`/health`) || (Path(`/api/v1/unblocks`) && Method(`GET`) && Query(`hostname`)) || (Path(`/api/v1/unblocks/ack`) && Method(`POST`)))"
       service: g0efilter-dash-service
       middlewares:
         - security-headers
@@ -182,7 +202,7 @@ http:
 ```
 
 **How it works:**
-- `g0efilter-ingest-router`: Matches `POST /api/v1/logs` and `/health` - no SSO required
+- `g0efilter-ingest-router`: Matches `POST /api/v1/logs`, `/health`, `GET /api/v1/unblocks?hostname=X`, and `POST /api/v1/unblocks/ack` - no SSO required (API key auth)
 - `g0efilter-dash-router`: Matches all other requests to the dashboard - requires SSO/OIDC authentication
 - The more specific ingest router rule takes precedence for API calls and health checks
 - All other traffic (UI, reads, etc.) goes through the dashboard router with SSO protection
@@ -196,7 +216,7 @@ services:
     image: docker.io/g0lab/g0efilter:latest
     container_name: g0efilter
     volumes:
-      - ./policy.yaml:/app/policy.yaml:ro
+      - ./policy.yaml:/app/policy.yaml
     cap_drop:
       - ALL
     cap_add:

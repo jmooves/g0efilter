@@ -4,9 +4,15 @@ package policy
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+const testEmptyPolicy = `allowlist:
+  ips: []
+  domains: []
+`
 
 func TestValidateIP(t *testing.T) {
 	t.Parallel()
@@ -522,11 +528,7 @@ func testReadPolicyInvalidDomain(t *testing.T) {
 func testReadPolicyEmptyLists(t *testing.T) {
 	t.Helper()
 
-	content := `allowlist:
-  ips: []
-  domains: []
-`
-	tmpFile := createTempFile(t, content)
+	tmpFile := createTempFile(t, testEmptyPolicy)
 
 	ips, domains, err := ReadPolicy(tmpFile)
 	if err != nil {
@@ -824,4 +826,254 @@ func stringSlicesEqual(a, b []string) bool {
 	}
 
 	return true
+}
+
+//nolint:cyclop,dupl,gosec,funlen,noinlineerr // Test function with setup/teardown patterns
+func TestAppendDomain(t *testing.T) {
+	t.Parallel()
+
+	t.Run("appends new domain to policy file", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		initialPolicy := `allowlist:
+  ips: []
+  domains:
+    - example.com
+`
+		if err := os.WriteFile(policyFile, []byte(initialPolicy), 0o644); err != nil {
+			t.Fatalf("Failed to write initial policy: %v", err)
+		}
+
+		err := AppendDomain(policyFile, "newdomain.com")
+		if err != nil {
+			t.Fatalf("AppendDomain failed: %v", err)
+		}
+
+		// Read back and verify
+		ips, domains, err := ReadPolicy(policyFile)
+		if err != nil {
+			t.Fatalf("ReadPolicy failed: %v", err)
+		}
+
+		if len(domains) != 2 {
+			t.Errorf("Got %d domains, want 2", len(domains))
+		}
+
+		found := slices.Contains(domains, "newdomain.com")
+
+		if !found {
+			t.Errorf("newdomain.com not found in domains: %v", domains)
+		}
+
+		if len(ips) != 0 {
+			t.Errorf("Got %d IPs, want 0", len(ips))
+		}
+	})
+
+	t.Run("skips duplicate domain", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		initialPolicy := `allowlist:
+  ips: []
+  domains:
+    - example.com
+`
+		if err := os.WriteFile(policyFile, []byte(initialPolicy), 0o644); err != nil {
+			t.Fatalf("Failed to write initial policy: %v", err)
+		}
+
+		err := AppendDomain(policyFile, "example.com")
+		if err != nil {
+			t.Fatalf("AppendDomain failed: %v", err)
+		}
+
+		// Read back and verify no duplicate
+		_, domains, err := ReadPolicy(policyFile)
+		if err != nil {
+			t.Fatalf("ReadPolicy failed: %v", err)
+		}
+
+		if len(domains) != 1 {
+			t.Errorf("Got %d domains, want 1 (no duplicate)", len(domains))
+		}
+	})
+
+	t.Run("validates domain before appending", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		if err := os.WriteFile(policyFile, []byte(testEmptyPolicy), 0o644); err != nil {
+			t.Fatalf("Failed to write initial policy: %v", err)
+		}
+
+		err := AppendDomain(policyFile, "invalid..domain")
+		if err == nil {
+			t.Error("AppendDomain should fail for invalid domain")
+		}
+	})
+
+	t.Run("rejects empty domain", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		err := AppendDomain(policyFile, "")
+		if err == nil {
+			t.Error("AppendDomain should fail for empty domain")
+		}
+	})
+}
+
+//nolint:gocognit,dupl,gosec,cyclop,noinlineerr,funlen // Test function with setup/teardown patterns
+func TestAppendIP(t *testing.T) {
+	t.Parallel()
+
+	t.Run("appends new IP to policy file", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		initialPolicy := `allowlist:
+  ips:
+    - 192.168.1.1
+  domains: []
+`
+		if err := os.WriteFile(policyFile, []byte(initialPolicy), 0o644); err != nil {
+			t.Fatalf("Failed to write initial policy: %v", err)
+		}
+
+		err := AppendIP(policyFile, "10.0.0.1")
+		if err != nil {
+			t.Fatalf("AppendIP failed: %v", err)
+		}
+
+		// Read back and verify
+		ips, domains, err := ReadPolicy(policyFile)
+		if err != nil {
+			t.Fatalf("ReadPolicy failed: %v", err)
+		}
+
+		if len(ips) != 2 {
+			t.Errorf("Got %d IPs, want 2", len(ips))
+		}
+
+		found := slices.Contains(ips, "10.0.0.1")
+
+		if !found {
+			t.Errorf("10.0.0.1 not found in IPs: %v", ips)
+		}
+
+		if len(domains) != 0 {
+			t.Errorf("Got %d domains, want 0", len(domains))
+		}
+	})
+
+	t.Run("appends CIDR to policy file", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		if err := os.WriteFile(policyFile, []byte(testEmptyPolicy), 0o644); err != nil {
+			t.Fatalf("Failed to write initial policy: %v", err)
+		}
+
+		err := AppendIP(policyFile, "10.0.0.0/24")
+		if err != nil {
+			t.Fatalf("AppendIP failed: %v", err)
+		}
+
+		ips, _, err := ReadPolicy(policyFile)
+		if err != nil {
+			t.Fatalf("ReadPolicy failed: %v", err)
+		}
+
+		if len(ips) != 1 || ips[0] != "10.0.0.0/24" {
+			t.Errorf("Got IPs %v, want [10.0.0.0/24]", ips)
+		}
+	})
+
+	t.Run("skips duplicate IP", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		initialPolicy := `allowlist:
+  ips:
+    - 192.168.1.1
+  domains: []
+`
+		if err := os.WriteFile(policyFile, []byte(initialPolicy), 0o644); err != nil {
+			t.Fatalf("Failed to write initial policy: %v", err)
+		}
+
+		err := AppendIP(policyFile, "192.168.1.1")
+		if err != nil {
+			t.Fatalf("AppendIP failed: %v", err)
+		}
+
+		ips, _, err := ReadPolicy(policyFile)
+		if err != nil {
+			t.Fatalf("ReadPolicy failed: %v", err)
+		}
+
+		if len(ips) != 1 {
+			t.Errorf("Got %d IPs, want 1 (no duplicate)", len(ips))
+		}
+	})
+
+	t.Run("validates IP before appending", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		if err := os.WriteFile(policyFile, []byte(testEmptyPolicy), 0o644); err != nil {
+			t.Fatalf("Failed to write initial policy: %v", err)
+		}
+
+		err := AppendIP(policyFile, "invalid-ip")
+		if err == nil {
+			t.Error("AppendIP should fail for invalid IP")
+		}
+	})
+
+	t.Run("rejects empty IP", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		err := AppendIP(policyFile, "")
+		if err == nil {
+			t.Error("AppendIP should fail for empty IP")
+		}
+	})
+
+	t.Run("rejects IPv6", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+		policyFile := filepath.Join(tmpDir, "policy.yaml")
+
+		if err := os.WriteFile(policyFile, []byte(testEmptyPolicy), 0o644); err != nil {
+			t.Fatalf("Failed to write initial policy: %v", err)
+		}
+
+		err := AppendIP(policyFile, "::1")
+		if err == nil {
+			t.Error("AppendIP should reject IPv6")
+		}
+	})
 }

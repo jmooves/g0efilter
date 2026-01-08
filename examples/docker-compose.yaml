@@ -4,7 +4,7 @@ services:
     image: docker.io/g0lab/g0efilter:latest
     container_name: g0efilter
     volumes:
-      - ./policy.yaml:/app/policy.yaml:ro
+      - ./policy.yaml:/app/policy.yaml
     cap_drop:
       - ALL
     cap_add:

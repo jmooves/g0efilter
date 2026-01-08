@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -21,6 +22,7 @@ var (
 	errInvalidFilePath         = errors.New("invalid file path")
 	errPathTraversalNotAllowed = errors.New("path traversal not allowed")
 	errNotRegularFile          = errors.New("not a regular file")
+	errUnknownAllowlistField   = errors.New("unknown allowlist field")
 )
 
 const maxDomainLength = 253
@@ -431,4 +433,80 @@ func validateDomains(lg *slog.Logger, file string, domains []string) ([]string, 
 	}
 
 	return cleanDomains, nil
+}
+
+// AppendDomain validates and appends a domain to the policy file's allowlist.
+// Returns an error if validation fails or file cannot be updated.
+func AppendDomain(file string, domain string) error {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return fmt.Errorf("%w: empty", errInvalidDomain)
+	}
+
+	err := validateDomain(domain)
+	if err != nil {
+		return err
+	}
+
+	return appendToAllowlist(file, "domains", domain)
+}
+
+// AppendIP validates and appends an IP address or CIDR range to the policy file's allowlist.
+// Returns an error if validation fails or file cannot be updated.
+func AppendIP(file string, ip string) error {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return fmt.Errorf("%w: empty", errInvalidIP)
+	}
+
+	err := validateIP(ip)
+	if err != nil {
+		return err
+	}
+
+	return appendToAllowlist(file, "ips", ip)
+}
+
+// appendToAllowlist appends a value to the specified field in the allowlist.
+func appendToAllowlist(file, field, value string) error {
+	cfg, err := loadConfig(file)
+	if err != nil {
+		return fmt.Errorf("failed to load policy: %w", err)
+	}
+
+	// Check for duplicates
+	switch field {
+	case "domains":
+		for _, d := range cfg.AllowList.Domains {
+			if strings.EqualFold(d, value) {
+				return nil // Already exists, no-op
+			}
+		}
+
+		cfg.AllowList.Domains = append(cfg.AllowList.Domains, value)
+	case "ips":
+		if slices.Contains(cfg.AllowList.IPs, value) {
+			return nil // Already exists, no-op
+		}
+
+		cfg.AllowList.IPs = append(cfg.AllowList.IPs, value)
+	default:
+		return fmt.Errorf("%w: %s", errUnknownAllowlistField, field)
+	}
+
+	// Write back to file
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal policy: %w", err)
+	}
+
+	cleanPath := filepath.Clean(file)
+
+	//nolint:gosec // File permissions are intentionally 0644 for policy files
+	err = os.WriteFile(cleanPath, data, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to write policy file: %w", err)
+	}
+
+	return nil
 }

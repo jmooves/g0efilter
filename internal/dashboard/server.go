@@ -39,6 +39,7 @@ type Server struct {
 	logger       *slog.Logger
 	store        LogStore         // Interface instead of concrete *memStore
 	broadcaster  EventBroadcaster // Interface instead of concrete *broadcaster
+	unblockStore UnblockStore     // Pending unblock requests
 	apiKey       string
 	readLimit    int
 	sseRetry     time.Duration
@@ -172,6 +173,7 @@ func newServer(lg *slog.Logger, cfg Config) *Server {
 		logger:       lg,
 		store:        newMemStore(cfg.BufferSize),
 		broadcaster:  newBroadcaster(),
+		unblockStore: newUnblockStore(),
 		apiKey:       cfg.APIKey,
 		readLimit:    cfg.ReadLimit,
 		sseRetry:     time.Duration(cfg.SERetryMs) * time.Millisecond,
@@ -196,12 +198,21 @@ func (s *Server) routes() http.Handler {
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Public endpoints
+		// Public endpoints (protected by reverse proxy middleware auth)
 		r.Get("/logs", s.listLogsHandler)
 		r.Get("/events", s.sseHandler)
 		r.Delete("/logs", s.clearLogsHandler)
+		r.Post("/unblocks", s.createUnblockHandler)       // Admin creates unblock requests
+		r.Get("/unblocks/status", s.unblockStatusHandler) // UI polls for pending/completed status
 
-		// Protected endpoints (require API key + rate limiting for remote log ingestion)
+		// Unblock polling endpoints (require API key - used by g0efilter instances)
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAPIKey())
+			r.Get("/unblocks", s.listUnblocksHandler)    // g0efilter polls for pending
+			r.Post("/unblocks/ack", s.ackUnblockHandler) // g0efilter acknowledges processed
+		})
+
+		// Log ingestion (require API key + rate limiting - used by g0efilter instances)
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAPIKey())
 			r.Use(s.rateLimitMiddleware(s.rateLimiter))
@@ -211,7 +222,7 @@ func (s *Server) routes() http.Handler {
 	})
 
 	// Serve static UI files
-	r.Mount("/", IndexHandler(s.sseRetry))
+	r.Mount("/", IndexHandler())
 
 	return r
 }
