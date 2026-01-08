@@ -136,7 +136,7 @@ func TestBuildConfigDefaults(t *testing.T) {
 		WriteTimeout: 0,
 	}
 
-	got := buildConfig("1.2.3", "2025-01-01", "abc1234")
+	got := buildConfig("1.2.3", "2026-01-01", "abc1234")
 	compareDashboardConfig(t, got, want)
 }
 
@@ -162,7 +162,7 @@ func TestBuildConfigCustomValues(t *testing.T) {
 		WriteTimeout: 0,
 	}
 
-	got := buildConfig("1.2.3", "2025-01-01", "abc1234")
+	got := buildConfig("1.2.3", "2026-01-01", "abc1234")
 	compareDashboardConfig(t, got, want)
 }
 
@@ -214,7 +214,7 @@ func TestSetupLoggingMissingAPIKey(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stderr = w
 
-	lg, err := setupLogging(cfg, "1.2.3", "2025-01-01", "abc1234")
+	lg, err := setupLogging(cfg, "1.2.3", "2026-01-01", "abc1234")
 
 	_ = w.Close()
 	os.Stderr = oldStderr

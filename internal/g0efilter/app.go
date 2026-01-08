@@ -27,7 +27,7 @@ import (
 
 const (
 	name         = "g0efilter"
-	licenseYear  = "2025"
+	licenseYear  = "2026"
 	licenseOwner = "g0lab"
 	licenseType  = "MIT"
 

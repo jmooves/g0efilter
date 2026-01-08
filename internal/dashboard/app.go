@@ -18,7 +18,7 @@ import (
 
 const (
 	name         = "g0efilter-dashboard"
-	licenseYear  = "2025"
+	licenseYear  = "2026"
 	licenseOwner = "g0lab"
 	licenseType  = "MIT"
 
