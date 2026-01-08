@@ -718,7 +718,7 @@ func processRemoteUnblocks(
 	cfg config,
 	lg *slog.Logger,
 ) {
-	unblocks, err := fetchPendingUnblocks(ctx, client, baseURL, cfg)
+	unblocks, err := fetchPendingUnblocks(ctx, client, baseURL, cfg, lg)
 	if err != nil {
 		lg.Warn("remote_unblock.fetch_failed", "err", err)
 
@@ -741,6 +741,7 @@ func fetchPendingUnblocks(
 	client *http.Client,
 	baseURL string,
 	cfg config,
+	lg *slog.Logger,
 ) ([]unblockRequest, error) {
 	url := baseURL + "/api/v1/unblocks"
 	if cfg.hostname != "" {
@@ -754,6 +755,12 @@ func fetchPendingUnblocks(
 
 	req.Header.Set("X-Api-Key", cfg.dashboardAPIKey)
 
+	lg.Log(ctx, logging.LevelTrace, "remote_unblock.request",
+		"method", req.Method,
+		"url", url,
+		"has_api_key", cfg.dashboardAPIKey != "",
+	)
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
@@ -762,6 +769,11 @@ func fetchPendingUnblocks(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		lg.Log(ctx, logging.LevelTrace, "remote_unblock.response",
+			"status", resp.StatusCode,
+			"url", url,
+		)
+
 		return nil, fmt.Errorf("%w: %d", errUnexpectedHTTPStatus, resp.StatusCode)
 	}
 
