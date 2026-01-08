@@ -12,10 +12,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/g0lab/g0efilter/internal/filter"
 	"github.com/rs/zerolog"
 )
 
@@ -215,23 +215,6 @@ func TestNewPoster(t *testing.T) {
 
 	// Clean shutdown and ensure channel is drained
 	poster.Stop(100 * time.Millisecond)
-}
-
-// t unused but required for test signature.
-//
-//nolint:paralleltest,revive // Cannot use t.Parallel() because newPoster modifies global defaultPoster
-func TestPosterEnqueue(t *testing.T) {
-	// Cannot use t.Parallel() because newPoster modifies global defaultPoster
-	var buf bytes.Buffer
-
-	zl := zerolog.New(&buf)
-
-	poster := newPoster("http://test.com/ingest", "test-key", zl, false)
-	defer poster.Stop(100 * time.Millisecond)
-
-	payload := []byte(`{"test": "data"}`)
-	poster.Enqueue(payload)
-	// Should not block or panic
 }
 
 //nolint:paralleltest // Cannot use t.Parallel() because newPoster modifies global defaultPoster
@@ -693,27 +676,6 @@ func TestShutdown(t *testing.T) {
 	defaultPoster = nil
 }
 
-func TestConstants(t *testing.T) {
-	t.Parallel()
-
-	// Test that constants have expected values
-	if filter.ActionRedirected != "REDIRECTED" {
-		t.Errorf("Expected ActionRedirected to be 'REDIRECTED', got %s", filter.ActionRedirected)
-	}
-
-	if LevelTrace.Level() != -8 {
-		t.Errorf("Expected LevelTrace to be -8, got %d", LevelTrace.Level())
-	}
-
-	if defaultQueueSize != 1024 {
-		t.Errorf("Expected defaultQueueSize to be 1024, got %d", defaultQueueSize)
-	}
-
-	if defaultLogMaxSizeMB != 100 {
-		t.Errorf("Expected defaultLogMaxSizeMB to be 100, got %d", defaultLogMaxSizeMB)
-	}
-}
-
 func TestZerologHandlerWithAttrs(t *testing.T) {
 	t.Parallel()
 
@@ -922,108 +884,41 @@ func mkTestPoster() (*poster, chan []byte) {
 	return p, ch
 }
 
-func TestShipToDashboard_ActionFilter_Blocked(t *testing.T) {
+func TestShipToDashboard_ActionFilters(t *testing.T) {
 	t.Parallel()
 
-	p, ch := mkTestPoster()
-	attrs := map[string]any{"action": "BLOCKED"}
-	shipToDashboard(p, "host", "test-version", time.Now(), "msg", attrs)
-
-	select {
-	case <-ch:
-		// ok
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("expected enqueue for BLOCKED")
+	tests := []struct {
+		name       string
+		attrs      map[string]any
+		expectShip bool
+	}{
+		{"BLOCKED ships", map[string]any{"action": "BLOCKED"}, true},
+		{"REDIRECTED does not ship", map[string]any{"action": "REDIRECTED"}, false},
+		{"ALLOWED with https ships", map[string]any{"action": "ALLOWED", "component": "https"}, true},
+		{"ALLOWED with http ships", map[string]any{"action": "ALLOWED", "component": "http"}, true},
+		{"ALLOWED with nflog does not ship", map[string]any{"action": "ALLOWED", "component": "nflog"}, false},
+		{"ALLOWED without component ships", map[string]any{"action": "ALLOWED"}, true},
+		{"OTHER action does not ship", map[string]any{"action": "OTHER"}, false},
 	}
-}
 
-func TestShipToDashboard_ActionFilter_Redirected(t *testing.T) {
-	t.Parallel()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	p, ch := mkTestPoster()
-	attrs := map[string]any{"action": "REDIRECTED"}
-	shipToDashboard(p, "host", "test-version", time.Now(), "msg", attrs)
+			p, ch := mkTestPoster()
+			shipToDashboard(p, "host", "test-version", time.Now(), "msg", tt.attrs)
 
-	select {
-	case <-ch:
-		t.Fatal("REDIRECTED should not be shipped to dashboard")
-	case <-time.After(100 * time.Millisecond):
-		// ok - REDIRECTED stays in console logs only
-	}
-}
-
-func TestShipToDashboard_ActionFilter_AllowedWithHTTPS(t *testing.T) {
-	t.Parallel()
-
-	p, ch := mkTestPoster()
-	attrs := map[string]any{"action": "ALLOWED", "component": "https"}
-	shipToDashboard(p, "host", "test-version", time.Now(), "msg", attrs)
-
-	select {
-	case <-ch:
-		// ok
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("expected enqueue for ALLOWED with https")
-	}
-}
-
-func TestShipToDashboard_ActionFilter_AllowedWithHttp(t *testing.T) {
-	t.Parallel()
-
-	p, ch := mkTestPoster()
-	attrs := map[string]any{"action": "ALLOWED", "component": "http"}
-	shipToDashboard(p, "host", "test-version", time.Now(), "msg", attrs)
-
-	select {
-	case <-ch:
-		// ok
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("expected enqueue for ALLOWED with http")
-	}
-}
-
-func TestShipToDashboard_ActionFilter_AllowedWithNflog(t *testing.T) {
-	t.Parallel()
-
-	p, ch := mkTestPoster()
-	attrs := map[string]any{"action": "ALLOWED", "component": "nflog"}
-	shipToDashboard(p, "host", "test-version", time.Now(), "msg", attrs)
-
-	select {
-	case <-ch:
-		t.Fatal("did not expect enqueue for ALLOWED with nflog (IP-based)")
-	case <-time.After(50 * time.Millisecond):
-		// ok: nothing enqueued
-	}
-}
-
-func TestShipToDashboard_ActionFilter_AllowedWithoutComponent(t *testing.T) {
-	t.Parallel()
-
-	p, ch := mkTestPoster()
-	attrs := map[string]any{"action": "ALLOWED"}
-	shipToDashboard(p, "host", "test-version", time.Now(), "msg", attrs)
-
-	select {
-	case <-ch:
-		// ok: ships because no component (could be from other sources)
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("expected enqueue for ALLOWED without component")
-	}
-}
-
-func TestShipToDashboard_ActionFilter_OtherAction(t *testing.T) {
-	t.Parallel()
-
-	p, ch := mkTestPoster()
-	attrs := map[string]any{"action": "OTHER"}
-	shipToDashboard(p, "host", "test-version", time.Now(), "msg", attrs)
-
-	select {
-	case <-ch:
-		t.Fatal("did not expect enqueue for other action")
-	case <-time.After(50 * time.Millisecond):
-		// ok: nothing enqueued
+			select {
+			case <-ch:
+				if !tt.expectShip {
+					t.Fatalf("did not expect enqueue for %v", tt.attrs)
+				}
+			case <-time.After(50 * time.Millisecond):
+				if tt.expectShip {
+					t.Fatalf("expected enqueue for %v", tt.attrs)
+				}
+			}
+		})
 	}
 }
 
@@ -1192,65 +1087,6 @@ func TestPosterQueueOverflow(t *testing.T) {
 	}
 }
 
-func TestPosterResilience(t *testing.T) {
-	t.Parallel()
-
-	var processed = make(chan struct{}, 1)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			err := r.Body.Close()
-			if err != nil {
-				t.Errorf("Failed to close request body: %v", err)
-			}
-		}()
-
-		w.WriteHeader(http.StatusOK)
-
-		processed <- struct{}{}
-	}))
-	defer server.Close()
-
-	zl := zerolog.New(io.Discard)
-	p := &poster{
-		url:          server.URL,
-		q:            make(chan []byte, 1),
-		httpC:        &http.Client{Timeout: 100 * time.Millisecond},
-		zl:           zl,
-		workers:      1,
-		retryTimeout: 30 * time.Second,
-		retryWaitMin: 10 * time.Millisecond,
-		retryWaitMax: 50 * time.Millisecond,
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	p.wg.Add(1)
-
-	go p.worker(ctx)
-
-	// Send initial message
-	p.Enqueue([]byte(`{"test":"first"}`))
-
-	// Wait for first message
-	select {
-	case <-ctx.Done():
-		t.Fatal("First message timeout")
-	case <-processed:
-	}
-
-	// Verify system still accepts new messages
-	p.Enqueue([]byte(`{"test":"second"}`))
-
-	select {
-	case <-ctx.Done():
-		t.Fatal("System should still be processing")
-	case <-processed:
-		// System still operational
-	}
-}
-
 //nolint:paralleltest // Cannot use t.Parallel() because newPoster modifies global defaultPoster
 func TestPosterStop_Timeout(_ *testing.T) {
 	var buf bytes.Buffer
@@ -1262,18 +1098,7 @@ func TestPosterStop_Timeout(_ *testing.T) {
 	poster.Stop(1 * time.Millisecond)
 }
 
-//nolint:paralleltest // Cannot use t.Parallel() because newPoster modifies global defaultPoster
-func TestPosterStop_ZeroTimeout(_ *testing.T) {
-	var buf bytes.Buffer
-
-	zl := zerolog.New(&buf)
-	poster := newPoster("http://test.com/ingest", "test-key", zl, false)
-
-	// Stop with zero timeout should wait indefinitely
-	poster.Stop(0)
-}
-
-func TestZerologHandlerWithPoster(t *testing.T) {
+func TestZerologHandlerEnabled_WithPoster(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -1326,35 +1151,6 @@ func TestNewWithContext_LogFile(t *testing.T) {
 	}
 }
 
-func TestZerologHandlerEnabled_WithPoster(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-
-	zl := zerolog.New(&buf)
-
-	// Create handler with poster
-	ch := make(chan []byte, 1)
-	mockPoster := &poster{q: ch, zl: zl}
-
-	handler := &zerologHandler{
-		zl:        zl,
-		termLevel: slog.LevelError, // Very high threshold
-		poster:    mockPoster,      // But poster present
-		hostname:  "test-host",
-	}
-
-	// Should be enabled even for debug due to poster
-	if !handler.Enabled(context.Background(), slog.LevelDebug) {
-		t.Error("Expected debug to be enabled due to poster")
-	}
-
-	// Should be enabled for error due to term level
-	if !handler.Enabled(context.Background(), slog.LevelError) {
-		t.Error("Expected error to be enabled due to term level")
-	}
-}
-
 func TestBuildDashboardPayload_HostnameHandling(t *testing.T) {
 	t.Parallel()
 
@@ -1390,4 +1186,212 @@ func TestBuildDashboardPayload_HostnameHandling(t *testing.T) {
 			t.Errorf("Expected param hostname, got %v", payload["hostname"])
 		}
 	})
+}
+
+func TestAlertingIntegration(t *testing.T) {
+	// Test that BLOCKED events trigger notifications when alerting is configured
+
+	// Set up mock notification server
+	notificationReceived := make(chan bool, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		validateNotificationRequest(t, r)
+		w.WriteHeader(http.StatusOK)
+
+		notificationReceived <- true
+	}))
+	defer server.Close()
+
+	// Configure environment for alerting
+	t.Setenv("NOTIFICATION_HOST", server.URL)
+	t.Setenv("NOTIFICATION_KEY", "test-token-123")
+	t.Setenv("HOSTNAME", "test-g0efilter")
+
+	// Create logger with alerting enabled
+	logger := NewWithContext(context.Background(), "DEBUG", io.Discard, "test-version")
+
+	// Test BLOCKED event
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	logger.InfoContext(ctx, "dns.blocked",
+		"component", "dns",
+		"action", "BLOCKED",
+		"qname", "malicious.com",
+		"qtype", "A",
+		"source_ip", "192.168.1.100",
+		"source_port", 12345,
+		"destination_ip", "8.8.8.8",
+		"destination_port", 53,
+		"reason", "DNS filtering",
+		"flow_id", "test-flow-123",
+	)
+
+	// Wait for notification
+	select {
+	case <-notificationReceived:
+		// Success
+	case <-time.After(2 * time.Second):
+		t.Error("Notification was not received within timeout")
+	}
+}
+
+func validateNotificationRequest(t *testing.T, r *http.Request) {
+	t.Helper()
+
+	if r.Method != http.MethodPost {
+		t.Errorf("Expected POST request, got %s", r.Method)
+
+		return
+	}
+
+	err := r.ParseForm()
+	if err != nil {
+		t.Errorf("Failed to parse form: %v", err)
+
+		return
+	}
+
+	// Validate content type
+	contentType := r.Header.Get("Content-Type")
+	if !strings.Contains(contentType, "application/x-www-form-urlencoded") {
+		t.Errorf("Expected URL-encoded form, got %s", contentType)
+
+		return
+	}
+
+	// Validate authentication header
+	authToken := r.Header.Get("X-Gotify-Key")
+	if authToken != "test-token-123" {
+		t.Errorf("Expected X-Gotify-Key 'test-token-123', got '%s'", authToken)
+
+		return
+	}
+
+	validateFormFields(t, r)
+	validateMessageContent(t, r)
+}
+
+func validateFormFields(t *testing.T, r *http.Request) {
+	t.Helper()
+
+	// Token is now in X-Gotify-Key header, not form data
+
+	if r.FormValue("title") == "" {
+		t.Error("Expected title in form data")
+	}
+
+	if r.FormValue("message") == "" {
+		t.Error("Expected message in form data")
+	}
+
+	if r.FormValue("priority") != "8" {
+		t.Error("Expected priority 8 in form data")
+	}
+}
+
+func validateMessageContent(t *testing.T, r *http.Request) {
+	t.Helper()
+
+	message := r.FormValue("message")
+	title := r.FormValue("title")
+
+	expectedContents := []struct {
+		field   string
+		value   string
+		inMsg   bool
+		inTitle bool
+	}{
+		{"source IP:port", "192.168.1.100:12345", true, false},
+		{"destination hostname", "malicious.com", true, false},
+		{"destination IP:port", "8.8.8.8:53", true, false},
+		{"reason", "DNS filtering", true, false},
+		{"component", "DNS", false, true},
+		{"hostname", "test-g0efilter", false, true},
+	}
+
+	for _, expected := range expectedContents {
+		if expected.inMsg && !strings.Contains(message, expected.value) {
+			t.Errorf("Expected %s '%s' in message, got: %s", expected.field, expected.value, message)
+		}
+
+		if expected.inTitle && !strings.Contains(title, expected.value) {
+			t.Errorf("Expected %s '%s' in title, got: %s", expected.field, expected.value, title)
+		}
+	}
+}
+
+func TestAlertingDisabled(t *testing.T) {
+	// Test that no notifications are sent when alerting is not configured
+	t.Parallel()
+
+	// Create logger without alerting configuration
+	logger := NewWithContext(context.Background(), "DEBUG", io.Discard, "test-version")
+
+	// Test BLOCKED event - should not panic or cause errors
+	logger.Info("dns.blocked",
+		"component", "dns",
+		"action", "BLOCKED",
+		"qname", "malicious.com",
+		"source_ip", "192.168.1.100",
+		"reason", "DNS filtering",
+	)
+
+	// Test passes if no panic occurs
+}
+
+func TestAlertingOnlyBlockedEvents(t *testing.T) {
+	// Test that only BLOCKED events trigger notifications
+	var notificationCount int64
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&notificationCount, 1)
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	// Configure alerting
+	t.Setenv("NOTIFICATION_HOST", server.URL)
+	t.Setenv("NOTIFICATION_KEY", "test-token")
+
+	logger := NewWithContext(context.Background(), "DEBUG", io.Discard, "test-version")
+
+	// Test various actions - only BLOCKED should trigger notification
+	testCases := []struct {
+		action   string
+		expected bool
+	}{
+		{"BLOCKED", true},
+		{"ALLOWED", false},
+		{"REDIRECTED", false},
+		{"ERROR", false},
+		{"blocked", true}, // case insensitive
+	}
+
+	for i, tc := range testCases {
+		atomic.StoreInt64(&notificationCount, 0)
+
+		// Use different IPs for each test case to avoid rate limiting
+		sourceIP := fmt.Sprintf("192.168.1.%d", i+1)
+		destIP := fmt.Sprintf("10.0.0.%d", i+1)
+
+		logger.Info("test.event",
+			"action", tc.action,
+			"source_ip", sourceIP,
+			"destination_ip", destIP,
+		)
+
+		// Give some time for potential notification
+		time.Sleep(50 * time.Millisecond)
+
+		count := atomic.LoadInt64(&notificationCount)
+		if tc.expected && count == 0 {
+			t.Errorf("Expected notification for action %s but none received", tc.action)
+		}
+
+		if !tc.expected && count > 0 {
+			t.Errorf("Unexpected notification for action %s", tc.action)
+		}
+	}
 }

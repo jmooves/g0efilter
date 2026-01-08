@@ -1,13 +1,11 @@
 //nolint:testpackage // Need access to internal implementation details
-package g0efilterdashboard
+package dashboard
 
 import (
 	"bytes"
 	"errors"
 	"os"
 	"testing"
-
-	"github.com/g0lab/g0efilter/internal/dashboard"
 )
 
 type envCase[T any] struct {
@@ -75,7 +73,7 @@ func TestGetenvFloat(t *testing.T) {
 	runEnvCases(t, cases, getenvFloat)
 }
 
-func compareDashboardConfig(t *testing.T, got, want dashboard.Config) {
+func compareDashboardConfig(t *testing.T, got, want Config) {
 	t.Helper()
 
 	if got.Addr != want.Addr {
@@ -126,7 +124,7 @@ func TestBuildConfigDefaults(t *testing.T) {
 	t.Setenv("RATE_BURST", "")
 	t.Setenv("WRITE_TIMEOUT", "")
 
-	want := dashboard.Config{
+	want := Config{
 		Addr:         ":8081",
 		APIKey:       "",
 		LogLevel:     "INFO",
@@ -152,7 +150,7 @@ func TestBuildConfigCustomValues(t *testing.T) {
 	t.Setenv("RATE_RPS", "100.5")
 	t.Setenv("RATE_BURST", "200.5")
 
-	want := dashboard.Config{
+	want := Config{
 		Addr:         "9000",
 		APIKey:       "test-key-123",
 		LogLevel:     "DEBUG",
@@ -187,7 +185,7 @@ func TestNormalizeAddr(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := dashboard.Config{Addr: tt.input}
+			cfg := Config{Addr: tt.input}
 			normalizeAddr(&cfg)
 
 			if cfg.Addr != tt.expected {
@@ -199,7 +197,7 @@ func TestNormalizeAddr(t *testing.T) {
 
 //nolint:paralleltest // Touches os.Stderr and creates loggers
 func TestSetupLoggingMissingAPIKey(t *testing.T) {
-	cfg := dashboard.Config{
+	cfg := Config{
 		Addr:         ":8081",
 		APIKey:       "",
 		LogLevel:     "INFO",

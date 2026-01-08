@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/g0lab/g0efilter/internal/g0efilterdashboard"
+	"github.com/g0lab/g0efilter/internal/dashboard"
 )
 
 var (
@@ -31,7 +31,7 @@ func init() {
 }
 
 func main() {
-	err := g0efilterdashboard.Run(os.Args, version, date, commit)
+	err := dashboard.RunDashboard(os.Args, version, date, commit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

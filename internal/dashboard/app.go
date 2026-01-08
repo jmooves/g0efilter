@@ -1,4 +1,4 @@
-package g0efilterdashboard
+package dashboard
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/g0lab/g0efilter/internal/dashboard"
 	"github.com/g0lab/g0efilter/internal/logging"
 )
 
@@ -36,8 +35,8 @@ var (
 	errMissingAPIKey = errors.New("API_KEY is required but not set")
 )
 
-// Run is the dashboard entrypoint used by cmd/g0efilter-dashboard.
-func Run(args []string, version, date, commit string) error {
+// RunDashboard is the dashboard entrypoint used by cmd/g0efilter-.
+func RunDashboard(args []string, version, date, commit string) error {
 	if handleVersionFlag(args, version, date, commit) {
 		return nil
 	}
@@ -61,7 +60,7 @@ func Run(args []string, version, date, commit string) error {
 	errCh := make(chan error, 1)
 
 	go func() {
-		errCh <- dashboard.Run(ctx, cfg)
+		errCh <- Run(ctx, cfg)
 	}()
 
 	select {
@@ -69,7 +68,7 @@ func Run(args []string, version, date, commit string) error {
 		cancel()
 
 		if err != nil {
-			lg.Error("dashboard.failed", "err", err)
+			lg.Error("failed", "err", err)
 
 			return err
 		}
@@ -164,8 +163,8 @@ func getenvFloat(k string, def float64) float64 {
 	return f
 }
 
-func buildConfig(version, _, _ string) dashboard.Config {
-	return dashboard.Config{
+func buildConfig(version, _, _ string) Config {
+	return Config{
 		Addr:         getenv("PORT", ":8081"),
 		APIKey:       getenv("API_KEY", ""),
 		LogLevel:     getenv("LOG_LEVEL", "INFO"),
@@ -179,7 +178,7 @@ func buildConfig(version, _, _ string) dashboard.Config {
 	}
 }
 
-func normalizeAddr(cfg *dashboard.Config) {
+func normalizeAddr(cfg *Config) {
 	if cfg.Addr != "" && !strings.Contains(cfg.Addr, ":") {
 		_, aerr := strconv.Atoi(cfg.Addr)
 		if aerr == nil {
@@ -188,7 +187,7 @@ func normalizeAddr(cfg *dashboard.Config) {
 	}
 }
 
-func setupLogging(cfg dashboard.Config, version, date, commit string) (*slog.Logger, error) {
+func setupLogging(cfg Config, version, date, commit string) (*slog.Logger, error) {
 	lg := logging.NewWithContext(context.Background(), cfg.LogLevel, os.Stdout, version)
 	slog.SetDefault(lg)
 
@@ -208,7 +207,7 @@ func setupLogging(cfg dashboard.Config, version, date, commit string) (*slog.Log
 	}
 
 	lg.Info(
-		"dashboard.starting",
+		"starting",
 		"version", version,
 		"commit", shortCommit,
 		"go_version", getGoVersion(),
