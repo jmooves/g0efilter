@@ -3,9 +3,15 @@ name: g0efilter Network Tests
 
 on:
   workflow_dispatch:
+
   pull_request:
     branches:
       - main
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
 
 permissions:
   contents: read
