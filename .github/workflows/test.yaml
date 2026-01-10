@@ -10,6 +10,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        filter_mode: [https, dns]
 
     steps:
       - name: Checkout
@@ -18,8 +21,10 @@ jobs:
       - name: Set up Docker Compose
         uses: docker/setup-compose-action@v1
 
-      - name: Bring up g0efilter stack
+      - name: Bring up g0efilter stack (${{ matrix.filter_mode }} mode)
         working-directory: examples/build
+        env:
+          FILTER_MODE: ${{ matrix.filter_mode }}
         run: |
           docker compose -f docker-compose-build.yaml up -d g0efilter tester
 
@@ -28,7 +33,7 @@ jobs:
         run: |
           sleep 5
 
-      - name: Run network policy tests
+      - name: Run network policy tests (${{ matrix.filter_mode }} mode)
         working-directory: examples/build
         run: |
           set -e
@@ -98,8 +103,8 @@ jobs:
             echo "OK: http://1.0.0.1 blocked"
           fi
 
-      # - name: Tear down stack
-      #   if: always()
-      #   working-directory: examples/build
-      #   run: |
-      #     docker compose -f docker-compose-build.yaml down -v
+      - name: Tear down stack
+        if: always()
+        working-directory: examples/build
+        run: |
+          docker compose -f docker-compose-build.yaml down -v
