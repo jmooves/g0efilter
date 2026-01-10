@@ -13,6 +13,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    environment: dockerhub
     strategy:
       matrix:
         filter_mode: [https, dns]
@@ -23,6 +24,13 @@ jobs:
 
       - name: Set up Docker Compose
         uses: docker/setup-compose-action@v1
+
+      - name: Log in to DHI registry
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Bring up g0efilter stack (${{ matrix.filter_mode }} mode)
         working-directory: examples/build
