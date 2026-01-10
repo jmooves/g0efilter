@@ -147,13 +147,13 @@ func ApplyNftRulesWithContext(
 		ruleset += "\n"
 	}
 
+	_ = deleteTableIfExists(ctx, "ip", "g0efilter_v4")
+	_ = deleteTableIfExists(ctx, "ip", "g0efilter_nat_v4")
+
 	err = validateAndParseRuleset(ctx, ruleset)
 	if err != nil {
 		return err
 	}
-
-	_ = deleteTableIfExists(ctx, "ip", "g0efilter_v4")
-	_ = deleteTableIfExists(ctx, "ip", "g0efilter_nat_v4")
 
 	return applyRuleset(ctx, ruleset)
 }
