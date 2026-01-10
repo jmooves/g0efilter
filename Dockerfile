@@ -1,4 +1,4 @@
-FROM alpine:3.23.2
+FROM dhi.io/alpine-base:3.23-alpine3.23-dev
 
 RUN apk add --no-cache nftables ca-certificates \
  && update-ca-certificates
