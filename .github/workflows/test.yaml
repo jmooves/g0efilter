@@ -103,8 +103,36 @@ jobs:
             echo "OK: http://1.0.0.1 blocked"
           fi
 
-      - name: Tear down stack
-        if: always()
-        working-directory: examples/build
-        run: |
-          docker compose -f docker-compose-build.yaml down -v
+          echo "=== Testing live policy reload ==="
+          echo "Updating policy.yaml to allowlist google.com and 1.0.0.1..."
+          cat > policy.yaml <<'EOF'
+          allowlist:
+            ips:
+              - "1.1.1.1"
+              - "192.168.0.0/16"
+              - "10.1.1.1"
+              - "1.0.0.1"
+            domains:
+              - "github.com"
+              - "google.com"
+              - "*.alpinelinux.org"
+          EOF
+
+          echo "Waiting 10 seconds for g0efilter to detect and apply changes..."
+          sleep 10
+
+          echo "9) https://google.com should now SUCCEED (after reload)"
+          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 https://google.com -o /dev/null"; then
+            echo "ERROR: https://google.com was blocked but should be allowed after reload"
+            exit 1
+          else
+            echo "OK: https://google.com allowed after reload"
+          fi
+
+          echo "10) https://1.0.0.1 should now SUCCEED (after reload)"
+          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 https://1.0.0.1 -o /dev/null"; then
+            echo "ERROR: https://1.0.0.1 was blocked but should be allowed after reload"
+            exit 1
+          else
+            echo "OK: https://1.0.0.1 allowed after reload"
+          fi
