@@ -35,8 +35,6 @@ services:
     restart: always
 
   example-container:
-    image: alpine:latest
-    container_name: example-container
-    command: >
-      sh -c "apk add --no-cache curl && tail -f /dev/null"
+    image: docker.io/alpine/curl:latest
+    command: sh -c "sleep infinity"
     network_mode: "service:g0efilter"

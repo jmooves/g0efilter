@@ -3,6 +3,9 @@ name: g0efilter Network Tests
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -10,6 +13,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    environment: dockerhub
+    strategy:
+      matrix:
+        filter_mode: [https, dns]
 
     steps:
       - name: Checkout
@@ -18,8 +25,17 @@ jobs:
       - name: Set up Docker Compose
         uses: docker/setup-compose-action@v1
 
-      - name: Bring up g0efilter stack
+      - name: Log in to DHI registry
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Bring up g0efilter stack (${{ matrix.filter_mode }} mode)
         working-directory: examples/build
+        env:
+          FILTER_MODE: ${{ matrix.filter_mode }}
         run: |
           docker compose -f docker-compose-build.yaml up -d g0efilter tester
 
@@ -28,13 +44,14 @@ jobs:
         run: |
           sleep 5
 
-      - name: Run network policy tests
+      - name: Run network policy tests (${{ matrix.filter_mode }} mode)
         working-directory: examples/build
         run: |
           set -e
           COMPOSE="docker compose -f docker-compose-build.yaml"
+          FILTER_MODE="${{ matrix.filter_mode }}"
 
-          echo "1) https://github.com should SUCCEED"
+          echo "[Domain] https://github.com should SUCCEED"
           if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 https://github.com -o /dev/null"; then
             echo "ERROR: https://github.com was blocked but should be allowed"
             exit 1
@@ -42,7 +59,7 @@ jobs:
             echo "OK: https://github.com allowed"
           fi
 
-          echo "2) http://github.com should SUCCEED"
+          echo "[Domain] http://github.com should SUCCEED"
           if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 http://github.com -o /dev/null"; then
             echo "ERROR: http://github.com was blocked but should be allowed"
             exit 1
@@ -50,23 +67,28 @@ jobs:
             echo "OK: http://github.com allowed"
           fi
 
-          echo "3) https://1.1.1.1 should SUCCEED (IP allowlist)"
-          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 https://1.1.1.1 -o /dev/null"; then
-            echo "ERROR: https://1.1.1.1 was blocked but should be allowed"
-            exit 1
+          # IP tests only apply to HTTPS mode (IPs bypass DNS filtering)
+          if [ "$FILTER_MODE" = "https" ]; then
+            echo "[IP] https://1.1.1.1 should SUCCEED (IP allowlist)"
+            if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 https://1.1.1.1 -o /dev/null"; then
+              echo "ERROR: https://1.1.1.1 was blocked but should be allowed"
+              exit 1
+            else
+              echo "OK: https://1.1.1.1 allowed"
+            fi
+
+            echo "[IP] http://1.1.1.1 should SUCCEED (IP allowlist)"
+            if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 http://1.1.1.1 -o /dev/null"; then
+              echo "ERROR: http://1.1.1.1 was blocked but should be allowed"
+              exit 1
+            else
+              echo "OK: http://1.1.1.1 allowed"
+            fi
           else
-            echo "OK: https://1.1.1.1 allowed"
+            echo "[IP] Skipping IP tests in DNS mode (IPs bypass DNS filtering)"
           fi
 
-          echo "4) http://1.1.1.1 should SUCCEED (IP allowlist)"
-          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 http://1.1.1.1 -o /dev/null"; then
-            echo "ERROR: http://1.1.1.1 was blocked but should be allowed"
-            exit 1
-          else
-            echo "OK: http://1.1.1.1 allowed"
-          fi
-
-          echo "5) https://google.com should FAIL"
+          echo "[Domain] https://google.com should FAIL"
           if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 https://google.com -o /dev/null"; then
             echo "ERROR: https://google.com succeeded but should be blocked"
             exit 1
@@ -74,7 +96,7 @@ jobs:
             echo "OK: https://google.com blocked"
           fi
 
-          echo "6) http://google.com should FAIL"
+          echo "[Domain] http://google.com should FAIL"
           if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 http://google.com -o /dev/null"; then
             echo "ERROR: http://google.com succeeded but should be blocked"
             exit 1
@@ -82,24 +104,78 @@ jobs:
             echo "OK: http://google.com blocked"
           fi
 
-          echo "7) https://1.0.0.1 should FAIL"
-          if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 https://1.0.0.1 -o /dev/null"; then
-            echo "ERROR: https://1.0.0.1 succeeded but should be blocked"
-            exit 1
+          # Only test blocked IPs in HTTPS mode
+          if [ "$FILTER_MODE" = "https" ]; then
+            echo "[IP] https://1.0.0.1 should FAIL"
+            if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 https://1.0.0.1 -o /dev/null"; then
+              echo "ERROR: https://1.0.0.1 succeeded but should be blocked"
+              exit 1
+            else
+              echo "OK: https://1.0.0.1 blocked"
+            fi
+
+            echo "[IP] http://1.0.0.1 should FAIL"
+            if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 http://1.0.0.1 -o /dev/null"; then
+              echo "ERROR: http://1.0.0.1 succeeded but should be blocked"
+              exit 1
+            else
+              echo "OK: http://1.0.0.1 blocked"
+            fi
           else
-            echo "OK: https://1.0.0.1 blocked"
+            echo "[IP] Skipping blocked IP tests in DNS mode"
           fi
 
-          echo "8) http://1.0.0.1 should FAIL"
-          if $COMPOSE exec tester sh -lc "curl -sS --max-time 5 http://1.0.0.1 -o /dev/null"; then
-            echo "ERROR: http://1.0.0.1 succeeded but should be blocked"
+          echo "=== Testing live policy reload ==="
+          echo "Updating policy.yaml to allowlist google.com and 1.0.0.1..."
+          cat > policy.yaml <<'EOF'
+          allowlist:
+            ips:
+              - "1.1.1.1"
+              - "192.168.0.0/16"
+              - "10.1.1.1"
+              - "1.0.0.1"
+            domains:
+              - "github.com"
+              - "google.com"
+              - "*.alpinelinux.org"
+          EOF
+
+          echo "Waiting 10 seconds for g0efilter to detect and apply changes..."
+          sleep 10
+
+          echo "[Domain] https://google.com should now SUCCEED (after reload)"
+          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 https://google.com -o /dev/null"; then
+            echo "ERROR: https://google.com was blocked but should be allowed after reload"
             exit 1
           else
-            echo "OK: http://1.0.0.1 blocked"
+            echo "OK: https://google.com allowed after reload"
           fi
 
-      # - name: Tear down stack
-      #   if: always()
-      #   working-directory: examples/build
-      #   run: |
-      #     docker compose -f docker-compose-build.yaml down -v
+          echo "[Domain] http://google.com should now SUCCEED (after reload)"
+          if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 http://google.com -o /dev/null"; then
+            echo "ERROR: http://google.com was blocked but should be allowed after reload"
+            exit 1
+          else
+            echo "OK: http://google.com allowed after reload"
+          fi
+
+          # Only test IP reloads in HTTPS mode
+          if [ "$FILTER_MODE" = "https" ]; then
+            echo "[IP] https://1.0.0.1 should now SUCCEED (after reload)"
+            if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 https://1.0.0.1 -o /dev/null"; then
+              echo "ERROR: https://1.0.0.1 was blocked but should be allowed after reload"
+              exit 1
+            else
+              echo "OK: https://1.0.0.1 allowed after reload"
+            fi
+
+            echo "[IP] http://1.0.0.1 should now SUCCEED (after reload)"
+            if ! $COMPOSE exec tester sh -lc "curl -sS --max-time 10 http://1.0.0.1 -o /dev/null"; then
+              echo "ERROR: http://1.0.0.1 was blocked but should be allowed after reload"
+              exit 1
+            else
+              echo "OK: http://1.0.0.1 allowed after reload"
+            fi
+          else
+            echo "[IP] Skipping IP reload tests in DNS mode"
+          fi
