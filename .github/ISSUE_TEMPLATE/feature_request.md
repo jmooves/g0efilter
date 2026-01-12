@@ -1,20 +1,23 @@
 ---
 name: Feature request
-about: Suggest an idea for this project
+about: Suggest an idea for g0efilter
 title: "[FEAT] "
 labels: enhancement
 assignees: g0lab
 
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+**Feature description**
+A clear and concise description of the feature you'd like to see.
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+**Use case**
+Describe the problem this feature would solve or the use case it would enable.
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+**Proposed solution**
+Describe how you envision this feature working.
+
+**Alternatives considered**
+(Optional) Any alternative solutions or workarounds you've considered.
 
 **Additional context**
-Add any other context or screenshots about the feature request here.
+Add any other context, examples, or screenshots about the feature request here.
