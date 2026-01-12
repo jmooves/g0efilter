@@ -10,9 +10,14 @@
 
 g0efilter is a lightweight container designed to filter outbound (egress) traffic from attached container workloads. Run g0efilter alongside your workloads and attach them to share its network namespace to enforce a simple IP and domain allowlist policy.
 
+### Background
+
+As a self-hoster running many open source apps, I wanted an easy way to restrict outbound connections from containers, as not all can be trusted. While Docker supports internal-only networks, some containers do need selective network and internet access. I wanted to support wildcard subdomains (e.g. `*.example.com`) without terminating TLS connections or relying on IP allowlisting alone, as CDNs can have multiple changing IPs and many subdomains. This could probably be achieved with third-party firewall products, but I wanted an open source, lightweight filter that runs alongside Docker Compose workloads...so here we are.
+
 ### Features
 
-- **Egress filtering** - Block unauthorized outbound traffic using a IP/CIDR and domain allowlist
+- **Egress filtering** - Explicitly allow specified IPs/CIDRs and domains in a policy file; anything not on the allowlist is blocked
+- **Wildcard subdomain support** - Allow wildcard subdomains like `*.example.com` to match any subdomain level
 - **Two filtering modes** - HTTPS (TLS SNI/HTTP Host inspection) or DNS-based filtering
 - **Live policy reloading** - Update policy.yaml without restarting containers
 - **Real-time dashboard** - Web UI with SSE streaming for traffic monitoring
@@ -34,6 +39,32 @@ Attach containers to g0efilter by setting `network_mode: "service:g0efilter"` in
 - **HTTPS mode (default):** Outbound HTTP/HTTPS traffic on ports 80/443 is intercepted and redirected to local services running inside g0efilter. These services inspect plain text packet data, including the HTTP `Host` header (for HTTP) or TLS SNI from the TLS Client Hello (for HTTPS, without terminating the connection), and cross-reference it against the allowlist. If the domain is allowed, the connection is established and traffic flows through (the service acts as a middleman). If not found in the allowlist, the connection is reset and traffic is blocked.
 
 - **DNS mode:** DNS queries are intercepted and redirected to an internal DNS server. The server only resolves allowlisted domains and non-allowlisted queries receive NXDOMAIN responses. Note that direct IP connections bypass DNS filtering entirely.
+
+**Filter Logic Flow (HTTPS mode):**
+```
+Start
+│
+├─► Is destination IP in allowlist? ── Yes ─► ALLOW (no redirect)
+│                                   └─ No
+│ 
+├─► Already established connection? ── Yes ─► ALLOW (no redirect)
+│                                   └─ No
+│ 
+├─► Is packet marked with SO_MARK 0x1? ── Yes ─► ALLOW (no redirect)
+│                                       └─ No
+│
+├─► Is dest port 80 or 443? ── No ─► BLOCK
+│                           └─ Yes
+│
+├─► Redirect to local filter service (8080 HTTP / 8443 HTTPS)
+│
+├─► Extract Host header (HTTP) / SNI (TLS)
+│
+├─► Name matches allowlist? ── Yes ─► FORWARD to original destination
+│                           └─ No ─► DROP
+│
+└─► LOG decision → Dashboard (optional) → End
+```
 
 > [!NOTE]
 > Attached containers share g0efilter's network namespace and must not bind to ports used by g0efilter.  
