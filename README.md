@@ -44,26 +44,23 @@ Attach containers to g0efilter by setting `network_mode: "service:g0efilter"` in
 ```
 Start
 │
-├─► Is destination IP in allowlist? ── Yes ─► ALLOW (no redirect)
-│                                   └─ No
+├─► Is destination IP in allowlist? ── Yes ─► ALLOW (skip remaining steps, no redirect)
+│                                   └─ No ─► continue
 │ 
-├─► Already established connection? ── Yes ─► ALLOW (no redirect)
-│                                   └─ No
+├─► Is connection already established? ── Yes ─► ALLOW (skip remaining steps, no redirect)
+│                                      └─ No ─► continue
 │ 
-├─► Is packet marked with SO_MARK 0x1? ── Yes ─► ALLOW (no redirect)
-│                                       └─ No
+├─► Is destination port 80 or 443? ── No ─► BLOCK
+│                                  └─ Yes ─► continue
 │
-├─► Is dest port 80 or 443? ── No ─► BLOCK
-│                           └─ Yes
+├─► Redirect to local filter service (port 8080 for HTTP, 8443 for HTTPS)
 │
-├─► Redirect to local filter service (8080 HTTP / 8443 HTTPS)
+├─► Extract domain from Host header (HTTP) or SNI (TLS)
 │
-├─► Extract Host header (HTTP) / SNI (TLS)
+├─► Does domain match allowlist? ── Yes ─► FORWARD to original destination
+│                                └─ No ─► DROP
 │
-├─► Name matches allowlist? ── Yes ─► FORWARD to original destination
-│                           └─ No ─► DROP
-│
-└─► LOG decision → Dashboard (optional) → End
+└─► LOG decision → Send to dashboard (if enabled) ─► End
 ```
 
 > [!NOTE]
