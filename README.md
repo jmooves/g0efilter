@@ -8,7 +8,7 @@
 > [!WARNING]
 > g0efilter is in active development and its configuration may change often.
 
-g0efilter is a lightweight container designed to filter outbound (egress) traffic from attached container workloads. Run g0efilter alongside your workloads and attach them to its network namespace to enforce a simple IP and domain allowlist policy.
+g0efilter is a lightweight container designed to filter outbound (egress) traffic from attached container workloads. Run g0efilter alongside your workloads and attach them to share its network namespace to enforce a simple IP and domain allowlist policy.
 
 ### Features
 
@@ -25,14 +25,15 @@ Refer to the [examples](https://github.com/g0lab/g0efilter/tree/main/examples).
 
 ### How it works
 
-* Attach containers to g0efilter using `network_mode: "service:g0efilter"` in Docker Compose
-* A policy file defines allowed IPs/CIDRs and domains - IPs bypass filtering entirely
-* Filtering mode is set via `FILTER_MODE` environment variable (`https` or `dns`)
-* The optional g0efilter-dashboard displays real-time traffic and enforcement actions
+Attach containers to g0efilter by setting `network_mode: "service:g0efilter"` in Docker Compose, which shares g0efilter's network namespace (network stack) with those containers. Traffic from attached containers is filtered based on a policy file that defines allowlisted IPs/CIDRs and domains.
 
-**HTTPS mode (default):** Redirects outbound HTTP/HTTPS traffic to local services that check the HTTP Host header or TLS SNI against the policy. Non-matching traffic is blocked.
+**Traffic to allowlisted IPs/CIDRs** bypasses all filtering and passes through directly.
 
-**DNS mode:** Redirects DNS queries to an internal server that only resolves allowlisted domains. Non-matching domains receive NXDOMAIN. Direct IP connections bypass DNS filtering.
+**Traffic to other IPs** is subject to domain-level filtering based on the `FILTER_MODE` environment variable (`https` or `dns`):
+
+- **HTTPS mode (default):** Outbound HTTP/HTTPS traffic on ports 80/443 is intercepted and redirected to local services running inside g0efilter. These services inspect plain text packet data, including the HTTP `Host` header (for HTTP) or TLS SNI from the TLS Client Hello (for HTTPS, without terminating the connection), and cross-reference it against the allowlist. If the domain is allowed, the connection is established and traffic flows through (the service acts as a middleman). If not found in the allowlist, the connection is reset and traffic is blocked.
+
+- **DNS mode:** DNS queries are intercepted and redirected to an internal DNS server. The server only resolves allowlisted domains and non-allowlisted queries receive NXDOMAIN responses. Note that direct IP connections bypass DNS filtering entirely.
 
 > [!NOTE]
 > Attached containers share g0efilter's network namespace and must not bind to ports used by g0efilter.  
@@ -60,7 +61,7 @@ allowlist:
 ```
 
 > [!NOTE]
-> - The policy file supports live reloading: edits to policy.yaml automatically trigger rule and service updates without needing to restart the container.
+> - The policy file supports live reloading: edits to policy.yaml automatically trigger rule and service updates without needing to restart the container. The internal g0efilter services are restarted, but the container itself remains running.
 > - If you do not need live reloading, you can use environment variables (ALLOWLIST_IPS, ALLOWLIST_DOMAINS) instead of a policy file. If both are present, environment variables take precedence.
 
 ### Environment variables
@@ -224,10 +225,8 @@ services:
     restart: always
 
   example-container:
-    image: alpine:latest
-    container_name: example-container
-    command: >
-      sh -c "apk add --no-cache curl && tail -f /dev/null"
+    image: docker.io/alpine/curl:latest
+    command: sh -c "sleep infinity"
     network_mode: "service:g0efilter"
 ```
 
