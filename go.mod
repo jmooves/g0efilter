@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/florianl/go-nflog/v2 v2.2.0
-	github.com/go-chi/chi/v5 v5.2.3
+	github.com/go-chi/chi/v5 v5.2.4
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/gopacket v1.1.19
 	github.com/miekg/dns v1.1.70
