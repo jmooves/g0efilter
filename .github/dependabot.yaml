@@ -12,8 +12,7 @@ updates:
       interval: "daily"
     labels: ["dependencies", "github-actions"]
     commit-message:
-      prefix: "deps"
-      include: "scope"
+      prefix: "chore"
 
   - package-ecosystem: "gomod"
     directory: "/"
@@ -21,8 +20,7 @@ updates:
       interval: "daily"
     labels: ["dependencies", "gomod"]
     commit-message:
-      prefix: "deps"
-      include: "scope"
+      prefix: "chore"
 
   - package-ecosystem: "docker"
     directory: "/"
@@ -30,5 +28,4 @@ updates:
       interval: "daily"
     labels: ["dependencies", "docker"]
     commit-message:
-      prefix: "deps"
-      include: "scope"
+      prefix: "chore"
