@@ -7,7 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.4
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/gopacket v1.1.19
-	github.com/miekg/dns v1.1.70
+	github.com/miekg/dns v1.1.72
 	github.com/rs/zerolog v1.34.0
 	golang.org/x/net v0.49.0
 	golang.org/x/sys v0.40.0
