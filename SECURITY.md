@@ -1,6 +1,6 @@
 # Security
 
-This is a personal open-source project maintained in spare time, best effort only.
+This is a personal open-source project maintained in spare time, best effort only. That said, I do try to stay ontop of all the latest security updates. 
 
 ## Supported Versions
 
@@ -11,7 +11,7 @@ This is a personal open-source project maintained in spare time, best effort onl
 | `main` branch                | :white_check_mark: |
 | anything else                | :x:                |
 
-## Reporting a Vulnerability
+## Report a Vulnerability
 Please report issues **privately** via GitHub:
 
 - Repo → **Security** → **Report a vulnerability**

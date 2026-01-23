@@ -1041,9 +1041,8 @@ func TestPosterRetry(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest
 func TestPosterQueueOverflow(t *testing.T) {
-	t.Parallel()
-
 	// Ensure debug level is enabled for this test
 	origLevel := zerolog.GlobalLevel()
 
